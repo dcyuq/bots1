@@ -19,7 +19,7 @@ class ScrimModal(discord.ui.Modal, title="Scrim Setup"):
         placeholder="e.g. avenoir scrims!",
         style=discord.TextStyle.paragraph,
         required=True,
-        max_length=1000,
+        max_length=2000,
     )
 
     team_count = discord.ui.TextInput(
