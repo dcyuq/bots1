@@ -1,10 +1,13 @@
 import discord
 from discord.ext import commands, tasks
+
 from storage import Store
+from roleutils import assignable_now, check_role_assignable
 
 _store = Store("vanity.json")
 
 SWEEP_MINUTES = 10
+MIN_KEYWORD_LENGTH = 2
 
 
 def load_data():
@@ -22,62 +25,9 @@ def get_guild_config(guild_id):
     return config.get(str(guild_id))
 
 
-DANGEROUS_PERMS = (
-    "administrator",
-    "manage_guild",
-    "manage_roles",
-    "manage_channels",
-    "manage_webhooks",
-    "manage_messages",
-    "ban_members",
-    "kick_members",
-    "moderate_members",
-    "mention_everyone",
-)
-
-
 def can_manage(member: discord.Member) -> bool:
     perms = member.guild_permissions
     return perms.administrator or perms.manage_roles
-
-
-def dangerous_perms(role: discord.Role):
-    """Return the list of escalation-capable permissions a role grants."""
-    perms = role.permissions
-    return [name for name in DANGEROUS_PERMS if getattr(perms, name)]
-
-
-def check_role_assignable(role: discord.Role, actor: discord.Member) -> str | None:
-    """Validate a candidate vanity role. Returns an error string, or None."""
-    guild = role.guild
-
-    if role.is_default() or role.managed:
-        return "That role can't be assigned by a bot."
-
-    if not guild.me.guild_permissions.manage_roles:
-        return "I don't have the Manage Roles permission."
-
-    if role >= guild.me.top_role:
-        return (
-            "That role is above me in the hierarchy. Move my role higher in "
-            "Server Settings first."
-        )
-
-    if actor.id != guild.owner_id and role >= actor.top_role:
-        return (
-            "That role is at or above your own highest role, so you can't "
-            "configure it to be given out."
-        )
-
-    granted = dangerous_perms(role)
-    if granted:
-        listed = ", ".join(granted)
-        return (
-            f"That role grants **{listed}**. I won't hand out privileged roles "
-            "automatically based on someone's status text."
-        )
-
-    return None
 
 
 def get_custom_status(member: discord.Member) -> str:
@@ -119,10 +69,10 @@ class VanityConfigModal(discord.ui.Modal, title="Vanity Role Setup"):
 
         keyword = self.keyword.value.strip()
 
-        if len(keyword) < 2:
+        if len(keyword) < MIN_KEYWORD_LENGTH:
             await interaction.response.send_message(
-                "Use a keyword of at least 2 characters. Very short keywords "
-                "match almost every status by accident.",
+                f"Use a keyword of at least {MIN_KEYWORD_LENGTH} characters. "
+                "Very short keywords match almost every status by accident.",
                 ephemeral=True,
             )
             return
@@ -167,6 +117,7 @@ class VanitySetupView(discord.ui.View):
     def __init__(self, author_id: int):
         super().__init__(timeout=120)
         self.author_id = author_id
+        self.message = None
         self.add_item(VanityRoleSelect())
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -183,6 +134,15 @@ class VanitySetupView(discord.ui.View):
             return False
         return True
 
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
+
 
 class Vanity(commands.Cog):
 
@@ -192,7 +152,6 @@ class Vanity(commands.Cog):
 
     def cog_unload(self):
         self.sweep.cancel()
-
 
     async def sync_member(self, member: discord.Member):
         """Add or remove the vanity role based on the member's status."""
@@ -207,14 +166,8 @@ class Vanity(commands.Cog):
             return
 
         role = member.guild.get_role(settings["role_id"])
-        if role is None:
-            return
 
-        me = member.guild.me
-        if not me.guild_permissions.manage_roles or role >= me.top_role:
-            return
-
-        if dangerous_perms(role):
+        if not assignable_now(role, member.guild.me):
             return
 
         should_have = has_keyword(member, settings["keyword"])
@@ -231,7 +184,6 @@ class Vanity(commands.Cog):
             except (discord.Forbidden, discord.HTTPException):
                 pass
 
-
     @commands.Cog.listener()
     async def on_presence_update(self, before: discord.Member, after: discord.Member):
         settings = get_guild_config(after.guild.id)
@@ -247,6 +199,16 @@ class Vanity(commands.Cog):
     async def on_member_join(self, member: discord.Member):
         await self.sync_member(member)
 
+    @commands.Cog.listener()
+    async def on_guild_role_delete(self, role: discord.Role):
+        """Drop the config if the awarded role is deleted."""
+        settings = get_guild_config(role.guild.id)
+        if settings is None or settings["role_id"] != role.id:
+            return
+
+        del config[str(role.guild.id)]
+        save_data(config)
+
     @tasks.loop(minutes=SWEEP_MINUTES)
     async def sweep(self):
         """Reconcile every member, catching anything the gateway missed."""
@@ -254,13 +216,17 @@ class Vanity(commands.Cog):
             guild = self.bot.get_guild(int(guild_id))
             if guild is None:
                 continue
+
+            role = guild.get_role(settings["role_id"])
+            if not assignable_now(role, guild.me):
+                continue
+
             for member in guild.members:
                 await self.sync_member(member)
 
     @sweep.before_loop
     async def before_sweep(self):
         await self.bot.wait_until_ready()
-
 
     async def cog_check(self, ctx):
         """Gate every command in this cog behind Administrator / Manage Roles."""
@@ -304,9 +270,10 @@ class Vanity(commands.Cog):
             color=discord.Color.dark_theme(),
         )
 
-        await ctx.send(
+        view = VanitySetupView(ctx.author.id)
+        view.message = await ctx.send(
             embed=embed,
-            view=VanitySetupView(ctx.author.id),
+            view=view,
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
