@@ -2,9 +2,6 @@ import json
 import os
 from pathlib import Path
 
-# The folder this file sits in. For bots/avenoir/storage.py that is
-# bots/avenoir/, so data lands in bots/avenoir/data/ and stays separate
-# from every other bot in the repo.
 BOT_ROOT = Path(__file__).resolve().parent
 
 _data_dir = BOT_ROOT / "data"
@@ -13,8 +10,8 @@ _data_dir = BOT_ROOT / "data"
 def configure(path):
     """Point storage at a different folder.
 
-    Only needed if you later move this file into a shared core/ package and
-    launch bots from a single runner. Call it before any cog is imported.
+    Only needed if this file ever moves into a shared core/ package and the
+    bots are launched from a single runner. Call it before any cog imports.
     """
     global _data_dir
     _data_dir = Path(path).resolve()
@@ -39,10 +36,11 @@ class Store:
         self.name = filename
         self._default = default
 
-    # Paths are resolved on access, not in __init__, so configure() works
-    # no matter what order modules happen to import in.
     @property
     def path(self):
+        """Resolved on access, not in __init__, so configure() works
+        regardless of the order modules happen to import in.
+        """
         return _data_dir / self.name
 
     @property

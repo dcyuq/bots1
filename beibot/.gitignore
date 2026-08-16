@@ -1,22 +1,12 @@
-# Environment / secrets
 .env
 .env.*
 !.env.example
 cookies.txt
 
-# Bot runtime data
-stickynotes.json
-autoresponders.json
-vanity.json
-
-# Bundled binaries — install FFmpeg via imageio-ffmpeg instead
+data/
 bin/
-
-# Obsidian vault (not part of the bot)
 bei bot/
-.obsidian/
 
-# Python
 __pycache__/
 *.py[cod]
 .venv/
@@ -24,19 +14,11 @@ venv/
 env/
 *.egg-info/
 
-# Logs
 *.log
 
-# Editors
 .vscode/
 .idea/
+.obsidian/
 
-# OS
 .DS_Store
 Thumbs.db
-
-data/
-stickynotes.json
-autoresponders.json
-active_stickies.json
-vanity.json

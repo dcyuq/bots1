@@ -149,7 +149,7 @@ class StickyEditModal(discord.ui.Modal):
         save_data(sticky_notes)
 
         await interaction.response.send_message(
-            f"Updated `{self.original_name}` → `{new_name}`.",
+            f"Updated `{self.original_name}` to `{new_name}`.",
             ephemeral=True
         )
 
@@ -427,10 +427,10 @@ class StickyNotes(commands.Cog):
             title="Sticky Notes",
             description=(
                 f"Total Notes: **{len(notes)}**\n\n"
-                "**View** — browse existing sticky notes\n"
-                "**Create** — add a new sticky note\n"
-                "**Edit** — change a note's trigger or message\n"
-                "**Delete** — remove a sticky note"
+                "**View** - browse existing sticky notes\n"
+                "**Create** - add a new sticky note\n"
+                "**Edit** - change a note's trigger or message\n"
+                "**Delete** - remove a sticky note"
             ),
             color=discord.Color.dark_theme()
         )

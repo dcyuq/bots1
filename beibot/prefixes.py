@@ -48,7 +48,7 @@ def validate(raw):
     """Check a candidate prefix. Returns (prefix, error) with one of them None.
 
     A trailing space is allowed if the whole thing is wrapped in quotes, so
-    "6ix " gives you a word prefix that reads naturally in chat.
+    "bei " gives you a word prefix that reads naturally in chat.
     """
     if raw is None:
         return None, "Give me a prefix to use."
@@ -69,7 +69,7 @@ def validate(raw):
     if any(ch.isspace() for ch in core):
         return None, (
             "A prefix can't contain spaces. If you want a trailing space, "
-            'wrap it in quotes like "6ix ".'
+            'wrap it in quotes like "bei ".'
         )
 
     if value.startswith(RESERVED_STARTS):

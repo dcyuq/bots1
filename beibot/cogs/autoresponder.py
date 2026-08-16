@@ -208,7 +208,7 @@ class AutoResponderEditModal(discord.ui.Modal):
         save_data(responders)
 
         await interaction.response.send_message(
-            f"Updated `{self.original_trigger}` → `{new_trigger}` "
+            f"Updated `{self.original_trigger}` to `{new_trigger}` "
             f"({MATCH_MODE_LABELS[mode]}).",
             ephemeral=True
         )
@@ -380,9 +380,9 @@ class AutoResponder(commands.Cog):
             title="Autoresponders",
             description=(
                 f"Total: **{len(guild_responders)}**\n\n"
-                "**Create** — add a new autoresponder\n"
-                "**Edit** — change a trigger, response, or match mode\n"
-                "**Delete** — remove an autoresponder"
+                "**Create** - add a new autoresponder\n"
+                "**Edit** - change a trigger, response, or match mode\n"
+                "**Delete** - remove an autoresponder"
             ),
             color=discord.Color.dark_theme()
         )

@@ -2,26 +2,55 @@ import json
 import os
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-DATA_DIR = ROOT / "data"
+BOT_ROOT = Path(__file__).resolve().parent
+
+_data_dir = BOT_ROOT / "data"
+
+
+def configure(path):
+    """Point storage at a different folder.
+
+    Only needed if this file ever moves into a shared core/ package and the
+    bots are launched from a single runner. Call it before any cog imports.
+    """
+    global _data_dir
+    _data_dir = Path(path).resolve()
+
+
+def data_dir():
+    return _data_dir
 
 
 class Store:
     """A JSON file that survives crashes, restarts and git pulls.
 
-    Files live in a data/ directory next to main.py, resolved absolutely so
-    the working directory does not matter. Writes go to a temp file and are
-    renamed into place, so a process killed mid-write leaves the previous
-    version intact rather than a truncated one. The previous version is also
-    kept as a .bak and used automatically if the main file is unreadable.
+    Writes go to a temp file which is flushed, fsynced, then renamed into
+    place. Rename is atomic on every OS we care about, so a process killed
+    mid-write leaves the previous file intact rather than a truncated one.
+
+    The version being replaced is kept as a .bak and used automatically if
+    the main file ever comes back unreadable.
     """
 
     def __init__(self, filename, default=dict):
         self.name = filename
-        self.path = DATA_DIR / filename
-        self.backup = DATA_DIR / (filename + ".bak")
-        self.legacy = ROOT / filename
         self._default = default
+
+    @property
+    def path(self):
+        """Resolved on access, not in __init__, so configure() works
+        regardless of the order modules happen to import in.
+        """
+        return _data_dir / self.name
+
+    @property
+    def backup(self):
+        return _data_dir / (self.name + ".bak")
+
+    @property
+    def legacy(self):
+        """Older layout, where JSON sat next to the bot instead of in data/."""
+        return BOT_ROOT / self.name
 
     def load(self):
         for candidate in (self.path, self.backup, self.legacy):
@@ -30,7 +59,7 @@ class Store:
             try:
                 with open(candidate, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                if candidate is not self.path:
+                if candidate != self.path:
                     print(f"[storage] recovered {self.name} from {candidate.name}")
                     self.save(data)
                 return data
@@ -41,8 +70,8 @@ class Store:
 
     def save(self, data):
         try:
-            DATA_DIR.mkdir(parents=True, exist_ok=True)
-            tmp = DATA_DIR / (self.name + ".tmp")
+            _data_dir.mkdir(parents=True, exist_ok=True)
+            tmp = _data_dir / (self.name + ".tmp")
 
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)

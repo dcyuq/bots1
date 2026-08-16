@@ -18,6 +18,7 @@ CATEGORY_META = {
     "Autorole": "Give roles automatically when someone joins.",
     "Roles": "Add or remove roles from members.",
     "Welcome": "Greet joiners and announce leavers.",
+    "GroupCheck": "Check Roblox group membership and payout eligibility.",
     "Help": "This menu.",
 }
 
@@ -47,7 +48,8 @@ COMMAND_HELP = {
     "role": "Add or remove a role from a member.",
     "welcome": "Configure the welcome message.",
     "goodbye": "Configure the leave message.",
-    "prefix": "View or change the command prefix.",
+    "eligible": "Check a Roblox user against the configured groups.",
+    "gc": "Configure the eligibility checker.",
 }
 
 SUBCOMMAND_HELP = {
@@ -55,6 +57,12 @@ SUBCOMMAND_HELP = {
     "ticketsetup custom": "Full builder, starting empty.",
     "ticketsetup edit": "Reopen the builder on an existing setup.",
     "prefix set": "Change the prefix for this server.",
+    "gc addgroup": "Track a group.",
+    "gc removegroup": "Stop tracking a group.",
+    "gc list": "Show tracked groups and threshold.",
+    "gc setdays": "Set the eligibility threshold.",
+    "gc override": "Backdate a user's first-seen date.",
+    "gc clear": "Wipe a user's tracking records.",
     "prefix reset": "Go back to the default prefix.",
 }
 
@@ -139,7 +147,7 @@ def category_embed(cog_name, cmds, prefix):
         subs = subcommands_of(command)
         if subs:
             listed = "\n".join(
-                f"`{prefix}{s.qualified_name}` - {describe(s)}" for s in subs
+                f"`{usage(s, prefix)}` - {describe(s)}" for s in subs
             )
             value = f"{value}\n{listed}"
 
@@ -173,7 +181,7 @@ def command_embed(command, prefix):
         embed.add_field(
             name="Subcommands",
             value="\n".join(
-                f"`{prefix}{s.qualified_name}` - {describe(s)}" for s in subs
+                f"`{usage(s, prefix)}` - {describe(s)}" for s in subs
             ),
             inline=False,
         )
