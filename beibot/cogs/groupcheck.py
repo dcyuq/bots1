@@ -14,6 +14,11 @@ USERS_API = "https://users.roblox.com/v1/usernames/users"
 USER_INFO_API = "https://users.roblox.com/v1/users/{user_id}"
 USER_GROUPS_API = "https://groups.roblox.com/v2/users/{user_id}/groups/roles"
 GROUP_INFO_API = "https://groups.roblox.com/v1/groups/{group_id}"
+GROUP_LINK = "https://www.roblox.com/groups/{group_id}"
+AVATAR_API = (
+    "https://thumbnails.roblox.com/v1/users/avatar-headshot"
+    "?userIds={user_id}&size=150x150&format=Png&isCircular=false"
+)
 
 HEADERS = {
     "Accept": "application/json",
@@ -33,6 +38,10 @@ SUBCOMMANDS = (
     "override",
     "clear",
 )
+
+FOOTER_WAIT = "-# {days} d\u03b1y{plural} w\u03b1\u0131t \u2018t\u0131l you\u2019re el\u0131g\u0131ble !"
+
+PUBLIC_COMMANDS = ("eligible",)
 
 DEFAULT_DAYS = 14
 REQUEST_TIMEOUT = 15
@@ -105,6 +114,51 @@ def humanize(seconds):
     return "{0} minute{1}".format(minutes, "" if minutes == 1 else "s")
 
 
+class ResultView(discord.ui.LayoutView):
+    """Components V2 output.
+
+    Embeds have no divider primitive, so the grey rules come from Separator
+    components. A message using these cannot also carry content or embeds,
+    which is why the whole result is built as a view.
+    """
+
+    def __init__(self, username, avatar_url, lines, threshold_days, passed):
+        super().__init__(timeout=None)
+
+        container = discord.ui.Container(
+            accent_colour=(
+                discord.Colour.green() if passed else discord.Colour.red()
+            )
+        )
+
+        name = discord.ui.TextDisplay("**{0}**".format(username))
+        if avatar_url:
+            container.add_item(
+                discord.ui.Section(
+                    name, accessory=discord.ui.Thumbnail(avatar_url)
+                )
+            )
+        else:
+            container.add_item(name)
+
+        container.add_item(
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small)
+        )
+        container.add_item(discord.ui.TextDisplay("\n".join(lines)))
+        container.add_item(
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small)
+        )
+        container.add_item(
+            discord.ui.TextDisplay(
+                FOOTER_WAIT.format(
+                    days=threshold_days, plural="" if threshold_days == 1 else "s"
+                )
+            )
+        )
+
+        self.add_item(container)
+
+
 class GroupCheck(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -122,15 +176,25 @@ class GroupCheck(commands.Cog):
             await self.session.close()
 
     async def cog_check(self, ctx):
+        """Checking a user is open to everyone, configuration is not."""
         if ctx.guild is None:
             raise commands.NoPrivateMessage()
+        if ctx.command.qualified_name in PUBLIC_COMMANDS:
+            return True
         if can_manage(ctx.author):
             return True
         raise commands.MissingPermissions(["manage_guild"])
 
     async def cog_command_error(self, ctx, error):
-        if isinstance(error, commands.MissingPermissions):
-            await ctx.send("You need the Manage Server permission to use this.")
+        if isinstance(error, commands.CommandOnCooldown):
+            await ctx.send(
+                "Slow down, try again in {0:.0f}s.".format(error.retry_after)
+            )
+        elif isinstance(error, commands.MissingPermissions):
+            await ctx.send(
+                "Only staff can configure the checker. Anyone can run "
+                "`{0}eligible <user>`.".format(ctx.prefix)
+            )
         elif isinstance(error, commands.NoPrivateMessage):
             await ctx.send("This command can only be used in a server.")
         elif isinstance(error, commands.MissingRequiredArgument):
@@ -196,6 +260,24 @@ class GroupCheck(commands.Cog):
             }
         return mapping
 
+    async def fetch_avatar(self, user_id):
+        """Headshot URL for the embed thumbnail, or None.
+
+        Roblox renders thumbnails lazily, so a request can succeed while the
+        image is still Pending or the account is Blocked. Only Completed
+        entries carry a usable URL.
+        """
+        data = await self.api_get(AVATAR_API.format(user_id=user_id))
+        if not data:
+            return None
+        entries = data.get("data") or []
+        if not entries:
+            return None
+        entry = entries[0]
+        if entry.get("state") != "Completed":
+            return None
+        return entry.get("imageUrl")
+
     async def fetch_group_name(self, group_id):
         data = await self.api_get(GROUP_INFO_API.format(group_id=group_id))
         if not data:
@@ -203,6 +285,7 @@ class GroupCheck(commands.Cog):
         return data.get("name")
 
     @commands.command(name="eligible", aliases=["elig"])
+    @commands.cooldown(1, 10, commands.BucketType.user)
     async def eligible(self, ctx, *, user: str = None):
         """Check one Roblox user against every configured group."""
         if user is None:
@@ -405,7 +488,10 @@ class GroupCheck(commands.Cog):
                 await ctx.send("Couldn't find that Roblox user.")
                 return
 
-            memberships = await self.fetch_user_groups(resolved["id"])
+            memberships, avatar_url = await asyncio.gather(
+                self.fetch_user_groups(resolved["id"]),
+                self.fetch_avatar(resolved["id"]),
+            )
             if memberships is None:
                 await ctx.send("Roblox didn't respond. Try again in a moment.")
                 return
@@ -426,7 +512,11 @@ class GroupCheck(commands.Cog):
 
                 if membership is None:
                     seen.pop(key, None)
-                    lines.append("**{0}**\nNot in group".format(group_name))
+                    lines.append(
+                        "{0} : not a member yet, [join now]({1})".format(
+                            group_name, GROUP_LINK.format(group_id=group_id)
+                        )
+                    )
                     continue
 
                 first_seen = seen.get(key)
@@ -435,18 +525,12 @@ class GroupCheck(commands.Cog):
                     seen[key] = first_seen
 
                 elapsed = now - first_seen
-
                 if elapsed >= threshold:
                     eligible_count += 1
-                    status = "Eligible"
-                else:
-                    status = "Not yet, {0} remaining".format(
-                        humanize(threshold - elapsed)
-                    )
 
                 lines.append(
-                    "**{0}**\nRole: {1}\nTracked for {2} | {3}".format(
-                        group_name, membership["role"], humanize(elapsed), status
+                    "{0} : {1} since <t:{2}:d>".format(
+                        group_name, humanize(elapsed), first_seen
                     )
                 )
 
@@ -454,23 +538,15 @@ class GroupCheck(commands.Cog):
 
         passed = total > 0 and eligible_count == total
 
-        embed = discord.Embed(
-            title="Group eligibility: {0}".format(resolved["name"]),
-            description="\n\n".join(lines),
-            color=discord.Color.green() if passed else discord.Color.red(),
-        )
-        embed.add_field(
-            name="Result",
-            value="Eligible for payout" if passed else "Not eligible",
-            inline=False,
-        )
-        embed.set_footer(
-            text="User ID {0} | Threshold {1} days | Timer starts at first check".format(
-                resolved["id"], threshold_days
-            )
+        view = ResultView(
+            username=resolved["name"],
+            avatar_url=avatar_url,
+            lines=lines,
+            threshold_days=threshold_days,
+            passed=passed,
         )
 
-        await ctx.send(embed=embed)
+        await ctx.send(view=view)
 
 
 async def setup(bot):
