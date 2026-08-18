@@ -1,3 +1,4 @@
 discord.py>=2.7.1
 python-dotenv
 aiohttp
+Pillow>=10.0.0
