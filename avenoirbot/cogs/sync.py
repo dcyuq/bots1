@@ -12,20 +12,34 @@ class Sync(commands.Cog):
 
     Guild syncs land immediately. Global syncs can take up to an hour to
     appear in every server, so use the guild variant while iterating.
+
+    Note that a global sync affects every server the bot is in, not just
+    the one it was run from.
     """
 
     def __init__(self, bot):
         self.bot = bot
 
     async def cog_check(self, ctx):
-        if await self.bot.is_owner(ctx.author):
+        if ctx.guild is None:
+            raise commands.NoPrivateMessage()
+        if ctx.author.guild_permissions.administrator:
             return True
-        raise commands.NotOwner()
+        raise commands.MissingPermissions(["administrator"])
 
     async def cog_command_error(self, ctx, error):
-        if isinstance(error, commands.NotOwner):
-            return
-        await ctx.send(f"Sync failed: {type(error).__name__}: {error}")
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("You need Administrator permission to sync.")
+        elif isinstance(error, commands.NoPrivateMessage):
+            await ctx.send("This command only works in a server.")
+        elif isinstance(error, discord.Forbidden):
+            await ctx.send(
+                "Discord refused the request. The bot was most likely invited "
+                "without the applications.commands scope. Reinvite it with "
+                "that scope ticked and try again."
+            )
+        else:
+            await ctx.send(f"Sync failed: {type(error).__name__}: {error}")
 
     @commands.group(name="sync", invoke_without_command=True, hidden=True)
     async def sync(self, ctx):
@@ -38,7 +52,6 @@ class Sync(commands.Cog):
         )
 
     @sync.command(name="here", aliases=["guild"])
-    @commands.guild_only()
     async def sync_here(self, ctx):
         self.bot.tree.copy_global_to(guild=ctx.guild)
         async with ctx.typing():
@@ -56,7 +69,6 @@ class Sync(commands.Cog):
         )
 
     @sync.command(name="clearhere")
-    @commands.guild_only()
     async def sync_clear_here(self, ctx):
         self.bot.tree.clear_commands(guild=ctx.guild)
         async with ctx.typing():
