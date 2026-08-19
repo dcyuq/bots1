@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 from storage import Store, IntKeyStore
 from prefixes import prefix_for
@@ -412,7 +413,12 @@ class StickyNotes(commands.Cog):
         if changed:
             save_active()
 
-    @commands.command(name="stickynote", aliases=["sn"])
+    @commands.hybrid_command(
+        name="stickynote",
+        aliases=["sn"],
+        description="Open the sticky note panel.",
+    )
+    @app_commands.default_permissions(manage_messages=True)
     @commands.guild_only()
     async def stickynote(self, ctx: commands.Context):
         if not can_manage(ctx.author):
@@ -437,7 +443,12 @@ class StickyNotes(commands.Cog):
 
         await ctx.send(embed=embed, view=StickyPanelView(ctx.guild.id))
 
-    @commands.command(name="unsticky", aliases=["unsn"])
+    @commands.hybrid_command(
+        name="unsticky",
+        aliases=["unsn"],
+        description="Remove the active sticky note in this channel.",
+    )
+    @app_commands.default_permissions(manage_messages=True)
     @commands.guild_only()
     async def unsticky(self, ctx: commands.Context):
         if not can_manage(ctx.author):

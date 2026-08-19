@@ -4,6 +4,7 @@ import asyncio
 
 import aiohttp
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from storage import Store
@@ -284,7 +285,13 @@ class GroupCheck(commands.Cog):
             return None
         return data.get("name")
 
-    @commands.command(name="eligible", aliases=["elig"])
+    @commands.hybrid_command(
+        name="eligible",
+        aliases=["elig"],
+        description="Check a Roblox user against the configured groups.",
+    )
+    @app_commands.describe(user="Roblox username, profile link, or user ID")
+    @commands.guild_only()
     @commands.cooldown(1, 10, commands.BucketType.user)
     async def eligible(self, ctx, *, user: str = None):
         """Check one Roblox user against every configured group."""
@@ -297,12 +304,15 @@ class GroupCheck(commands.Cog):
 
         await self.run_check(ctx, user)
 
-    @commands.group(
+    @commands.hybrid_group(
         name="gc",
         aliases=["groupcheck"],
         usage="<subcommand>",
         invoke_without_command=True,
+        description="Configure the eligibility checker.",
     )
+    @app_commands.default_permissions(manage_guild=True)
+    @commands.guild_only()
     async def groupcheck(self, ctx, *, unknown: str = None):
         """Configuration for the eligibility checker."""
         prefix = ctx.prefix
@@ -326,7 +336,8 @@ class GroupCheck(commands.Cog):
             f"Configure with: {', '.join(f'`{s}`' for s in SUBCOMMANDS)}"
         )
 
-    @groupcheck.command(name="addgroup")
+    @groupcheck.command(name="addgroup", description="Start tracking a Roblox group.")
+    @app_commands.describe(link="Group link or group ID")
     async def addgroup(self, ctx, *, link: str):
         group_id = parse_group_id(link)
         if group_id is None:
@@ -345,7 +356,11 @@ class GroupCheck(commands.Cog):
 
         await ctx.send("Added group: **{0}** ({1})".format(name, group_id))
 
-    @groupcheck.command(name="removegroup")
+    @groupcheck.command(
+        name="removegroup",
+        description="Stop tracking a Roblox group.",
+    )
+    @app_commands.describe(link="Group link or group ID")
     async def removegroup(self, ctx, *, link: str):
         group_id = parse_group_id(link)
         if group_id is None:
@@ -364,7 +379,10 @@ class GroupCheck(commands.Cog):
 
         await ctx.send("Removed group: **{0}** ({1})".format(removed, group_id))
 
-    @groupcheck.command(name="list")
+    @groupcheck.command(
+        name="list",
+        description="Show the tracked groups and the day threshold.",
+    )
     async def list_groups(self, ctx):
         entry = guild_config(ctx.guild.id)
         groups = entry["groups"]
@@ -386,7 +404,11 @@ class GroupCheck(commands.Cog):
         embed.set_footer(text="Eligibility threshold: {0} days".format(entry["days"]))
         await ctx.send(embed=embed)
 
-    @groupcheck.command(name="setdays")
+    @groupcheck.command(
+        name="setdays",
+        description="Set how many days a user must be tracked for.",
+    )
+    @app_commands.describe(days="Number of days required")
     async def setdays(self, ctx, days: int):
         if days < 0 or days > MAX_DAYS:
             await ctx.send("Pick a value between 0 and {0}.".format(MAX_DAYS))
@@ -399,7 +421,15 @@ class GroupCheck(commands.Cog):
 
         await ctx.send("Eligibility threshold set to {0} days.".format(days))
 
-    @groupcheck.command(name="override")
+    @groupcheck.command(
+        name="override",
+        description="Backdate a user's first-seen date for one group.",
+    )
+    @app_commands.describe(
+        user="Roblox username, profile link, or user ID",
+        group="Group link or group ID",
+        days="How many days ago to backdate to",
+    )
     async def override(self, ctx, user: str, group: str, days: int):
         group_id = parse_group_id(group)
         if group_id is None:
@@ -433,7 +463,11 @@ class GroupCheck(commands.Cog):
             )
         )
 
-    @groupcheck.command(name="clear")
+    @groupcheck.command(
+        name="clear",
+        description="Wipe every tracking record for a user.",
+    )
+    @app_commands.describe(user="Roblox username, profile link, or user ID")
     async def clear(self, ctx, *, user: str):
         resolved = await self.resolve_user(user)
         if resolved is None:

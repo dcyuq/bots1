@@ -2,6 +2,7 @@ import os
 import time
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from storage import Store
@@ -465,7 +466,13 @@ class Stamp(commands.Cog):
         await attachment.save(os.path.join(folder, filename))
         return filename
 
-    @commands.command(name="stamps", aliases=["mycard", "stampcard"])
+    @commands.hybrid_command(
+        name="stamps",
+        aliases=["mycard", "stampcard"],
+        description="Show a stamp card.",
+    )
+    @app_commands.describe(member="Whose card to show. Defaults to your own.")
+    @commands.guild_only()
     @commands.cooldown(1, 10, commands.BucketType.user)
     async def stamps(self, ctx, member: discord.Member = None):
         member = member or ctx.author
@@ -479,28 +486,45 @@ class Stamp(commands.Cog):
         )
         await self.send_card(ctx, member, config, record["count"], record["completed"], "")
 
-    @commands.group(name="stamp", invoke_without_command=True)
+    @commands.hybrid_group(name="stamp", invoke_without_command=True)
+    @app_commands.default_permissions(manage_messages=True)
+    @commands.guild_only()
     async def stamp(self, ctx, member: discord.Member = None):
         if member is None:
             await self.show_setup(ctx)
             return
         await self.apply(ctx, member, 1)
 
-    @stamp.command(name="add")
+    @stamp.command(name="add", description="Give a member one or more stamps.")
+    @app_commands.describe(member="Who to stamp", amount="How many to add")
     async def stamp_add(self, ctx, member: discord.Member, amount: int = 1):
         if amount < 1:
             await ctx.send("Amount must be at least 1.")
             return
         await self.apply(ctx, member, amount)
 
-    @stamp.command(name="remove", aliases=["undo"])
+    @stamp.command(
+        name="remove",
+        aliases=["undo"],
+        description="Take stamps back off a member's card.",
+    )
+    @app_commands.describe(member="Whose card to correct", amount="How many to remove")
     async def stamp_remove(self, ctx, member: discord.Member, amount: int = 1):
         if amount < 1:
             await ctx.send("Amount must be at least 1.")
             return
         await self.apply(ctx, member, -amount)
 
-    @stamp.command(name="set", aliases=["override"])
+    @stamp.command(
+        name="set",
+        aliases=["override"],
+        description="Set a member's card to an exact count.",
+    )
+    @app_commands.describe(
+        member="Whose card to set",
+        count="Stamps on the current card",
+        completed="Full cards finished before now",
+    )
     async def stamp_set(self, ctx, member: discord.Member, count: int, completed: int = None):
         config = self.config_for(ctx.guild.id)
         if self.stage_count(ctx.guild.id, config) < 2:
@@ -516,7 +540,8 @@ class Stamp(commands.Cog):
             ctx, member, config, count, record["completed"], "Card was set manually."
         )
 
-    @stamp.command(name="clear")
+    @stamp.command(name="clear", description="Delete a member's stamp record.")
+    @app_commands.describe(member="Whose record to delete")
     async def stamp_clear(self, ctx, member: discord.Member):
         data = self.store.load()
         block = self.guild_block(data, ctx.guild.id)
@@ -542,7 +567,13 @@ class Stamp(commands.Cog):
             ctx, member, config, record["count"], record["completed"], notes, complete=celebrate
         )
 
-    @stamp.group(name="setup", aliases=["config"], invoke_without_command=True)
+    @stamp.group(
+        name="setup",
+        aliases=["config"],
+        invoke_without_command=True,
+        fallback="show",
+        description="Show the stamp card setup and what is still missing.",
+    )
     async def setup(self, ctx):
         await self.show_setup(ctx)
 
@@ -589,7 +620,7 @@ class Stamp(commands.Cog):
         view.add_item(container)
         await ctx.send(view=view)
 
-    @setup.command(name="upload", aliases=["images"])
+    @setup.command(name="upload", aliases=["images"], with_app_command=False)
     async def setup_upload(self, ctx, start: int = 0):
         attachments = self.collect_images(ctx)
         if not attachments:
@@ -627,12 +658,20 @@ class Stamp(commands.Cog):
             lines.append("Upload at least a blank card and one stamped version to go live.")
         await ctx.send("\n".join(lines))
 
-    @setup.command(name="image", aliases=["stage"])
-    async def setup_image(self, ctx, index: int):
+    @setup.command(
+        name="image",
+        aliases=["stage"],
+        description="Set the image for one stage of the card.",
+    )
+    @app_commands.describe(
+        index="Which stage, where 0 is the blank card",
+        image="The image to use. Prefix users can attach or reply instead.",
+    )
+    async def setup_image(self, ctx, index: int, image: discord.Attachment = None):
         if index < 0 or index >= MAX_STAGES:
             await ctx.send("Stage must be between 0 and " + str(MAX_STAGES - 1) + ".")
             return
-        attachments = self.collect_images(ctx)
+        attachments = [image] if image is not None else self.collect_images(ctx)
         if not attachments:
             await ctx.send("Attach one image, or reply to a message holding it.")
             return
@@ -649,10 +688,31 @@ class Stamp(commands.Cog):
         self.store.save(data)
         await ctx.send("Stage " + str(index) + " updated.")
 
-    @setup.group(name="reward", aliases=["rewards"], invoke_without_command=True)
-    async def setup_reward(self, ctx, count: int = None, *, text: str = ""):
-        if count is None:
+    @setup.command(
+        name="reward",
+        aliases=["rewards"],
+        description="Set, clear or list the reward attached to a stamp number.",
+    )
+    @app_commands.describe(
+        target="A stamp number, or list, or clear",
+        text="What they get. Leave blank to remove the reward.",
+    )
+    async def setup_reward(self, ctx, target: str = None, *, text: str = ""):
+        target = (target or "").strip()
+        text = text.strip()
+
+        if not target or target.lower() in ("list", "show"):
             await self.show_rewards(ctx)
+            return
+
+        if target.lower() in ("clear", "unset", "remove"):
+            await self.clear_reward(ctx, text)
+            return
+
+        try:
+            count = int(target)
+        except ValueError:
+            await ctx.send("Give a stamp number, or list, or clear.")
             return
 
         config = self.config_for(ctx.guild.id)
@@ -661,7 +721,7 @@ class Stamp(commands.Cog):
             await ctx.send("Pick a stamp number between 1 and " + str(MAX_STAGES - 1) + ".")
             return
 
-        text = text.strip()[:200]
+        text = text[:200]
         if not text or text.lower() in BLOCK_WORDS:
             await self.drop_milestone(ctx, count)
             return
@@ -686,9 +746,11 @@ class Stamp(commands.Cog):
         self.store.save(data)
         await ctx.send("Removed the reward at stamp " + str(count) + ".")
 
-    @setup_reward.command(name="clear", aliases=["unset", "remove"])
-    async def reward_clear(self, ctx, target: str):
-        if target.strip().lower() == "all":
+    async def clear_reward(self, ctx, target):
+        """Remove one reward, or every reward when given all."""
+        target = (target or "").strip().lower()
+
+        if target == "all":
             data = self.store.load()
             block = self.guild_block(data, ctx.guild.id)
             block["config"]["milestones"] = {}
@@ -702,10 +764,6 @@ class Stamp(commands.Cog):
             await ctx.send("Give a stamp number, or all.")
             return
         await self.drop_milestone(ctx, count)
-
-    @setup_reward.command(name="list", aliases=["show"])
-    async def reward_list(self, ctx):
-        await self.show_rewards(ctx)
 
     async def show_rewards(self, ctx):
         config = self.config_for(ctx.guild.id)
@@ -726,8 +784,8 @@ class Stamp(commands.Cog):
 
         lines.append("")
         lines.append(
-            "Set one with " + ctx.prefix + "`stamp setup reward 4 free cookie`, "
-            "remove it with " + ctx.prefix + "`stamp setup reward clear 4`."
+            "Set one with `" + ctx.prefix + "stamp setup reward 4 free cookie`, "
+            "remove it with `" + ctx.prefix + "stamp setup reward clear 4`."
         )
 
         view = discord.ui.LayoutView(timeout=None)
@@ -736,7 +794,10 @@ class Stamp(commands.Cog):
         view.add_item(container)
         await ctx.send(view=view)
 
-    @setup.command(name="reset")
+    @setup.command(
+        name="reset",
+        description="Delete every uploaded card image. Collected stamps are kept.",
+    )
     async def setup_reset(self, ctx):
         data = self.store.load()
         block = self.guild_block(data, ctx.guild.id)
@@ -750,7 +811,8 @@ class Stamp(commands.Cog):
         self.store.save(data)
         await ctx.send("Stamp card images cleared. Collected stamps were kept.")
 
-    @stamp.command(name="preview")
+    @stamp.command(name="preview", description="Preview one stage of the card.")
+    @app_commands.describe(count="Which stage to render. Defaults to the last one.")
     async def stamp_preview(self, ctx, count: int = None):
         config = self.config_for(ctx.guild.id)
         total = self.stage_count(ctx.guild.id, config)

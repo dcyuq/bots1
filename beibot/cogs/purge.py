@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 import datetime
 import re
@@ -84,6 +85,25 @@ class ConfirmPurgeView(discord.ui.View):
         self.stop()
 
 
+def amount_problem(amount):
+    """Return a reason the count is unusable, or None."""
+    if amount < 1:
+        return "That has to be at least 1."
+    if amount > MAX_AMOUNT:
+        return f"I'll do at most {MAX_AMOUNT} at a time."
+    return None
+
+
+def describe_scope(amount, target, filter_name):
+    if target is not None and filter_name:
+        return f"{amount} {filter_name} message(s) from {target.display_name}"
+    if target is not None:
+        return f"{amount} message(s) from {target.display_name}"
+    if filter_name:
+        return f"{amount} {filter_name} message(s)"
+    return f"{amount} message(s)"
+
+
 class Purge(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -104,6 +124,64 @@ class Purge(commands.Cog):
             await ctx.send(f"Slow down, try again in {error.retry_after:.0f}s.")
         else:
             await ctx.send(f"Something went wrong: {error}")
+
+    async def run_purge(self, channel, author, amount, target, filter_name):
+        """Delete the matching messages and return a summary line.
+
+        Shared by the prefix command and the slash command so the two can
+        never drift apart. Discord errors are left to the caller, which
+        knows how to reply on its own surface.
+        """
+        limit = cutoff_time()
+        matched = 0
+        skipped_old = 0
+
+        extra = FILTERS.get(filter_name)
+
+        def check(message):
+            nonlocal matched, skipped_old
+
+            if matched >= amount:
+                return False
+            if target is not None and message.author.id != target.id:
+                return False
+            if extra is not None and not extra(message):
+                return False
+            if filter_name != "pinned" and message.pinned:
+                return False
+            if message.created_at < limit:
+                skipped_old += 1
+                return False
+
+            matched += 1
+            return True
+
+        scan = amount if (target is None and extra is None) else SCAN_LIMIT
+
+        deleted = await channel.purge(
+            limit=scan,
+            check=check,
+            reason=f"Purge by {author}",
+        )
+
+        parts = [f"Deleted {len(deleted)} message(s)"]
+        if target is not None:
+            parts.append(f"from {target.display_name}")
+        if filter_name:
+            parts.append(f"matching {filter_name}")
+
+        summary = " ".join(parts) + "."
+
+        if skipped_old:
+            summary += (
+                f" Skipped {skipped_old} older than {BULK_AGE_DAYS} days, "
+                "which Discord won't bulk delete."
+            )
+
+        if len(deleted) < amount and not skipped_old:
+            summary += " That was everything I could find."
+
+        return summary
 
     @commands.command(name="purge", aliases=["clear", "clean"])
     @commands.cooldown(1, 5, commands.BucketType.user)
@@ -131,27 +209,17 @@ class Purge(commands.Cog):
 
         if amount is None:
             await ctx.send(
-                "Give me a number. For example `,purge 10`, `,purge @someone 10`, "
-                "or `,purge bots 25`."
+                f"Give me a number. For example `{ctx.prefix}purge 10`, "
+                f"`{ctx.prefix}purge @someone 10`, or `{ctx.prefix}purge bots 25`."
             )
             return
 
-        if amount < 1:
-            await ctx.send("That has to be at least 1.")
+        problem = amount_problem(amount)
+        if problem:
+            await ctx.send(problem)
             return
 
-        if amount > MAX_AMOUNT:
-            await ctx.send(f"I'll do at most {MAX_AMOUNT} at a time.")
-            return
-
-        if target is not None and not filter_name:
-            described = f"{amount} message(s) from {target.display_name}"
-        elif filter_name and target is None:
-            described = f"{amount} {filter_name} message(s)"
-        elif filter_name and target is not None:
-            described = f"{amount} {filter_name} message(s) from {target.display_name}"
-        else:
-            described = f"{amount} message(s)"
+        described = describe_scope(amount, target, filter_name)
 
         if amount > CONFIRM_ABOVE:
             confirm = ConfirmPurgeView(ctx.author.id, amount, described)
@@ -171,42 +239,14 @@ class Purge(commands.Cog):
             if not confirm.confirmed:
                 return
 
-        limit = cutoff_time()
-        matched = 0
-        skipped_old = 0
-
-        extra = FILTERS.get(filter_name)
-
-        def check(message):
-            nonlocal matched, skipped_old
-
-            if matched >= amount:
-                return False
-            if target is not None and message.author.id != target.id:
-                return False
-            if extra is not None and not extra(message):
-                return False
-            if filter_name != "pinned" and message.pinned:
-                return False
-            if message.created_at < limit:
-                skipped_old += 1
-                return False
-
-            matched += 1
-            return True
-
-        scan = amount if (target is None and extra is None) else SCAN_LIMIT
-
         try:
             await ctx.message.delete()
         except (discord.NotFound, discord.Forbidden):
             pass
 
         try:
-            deleted = await ctx.channel.purge(
-                limit=scan,
-                check=check,
-                reason=f"Purge by {ctx.author}",
+            summary = await self.run_purge(
+                ctx.channel, ctx.author, amount, target, filter_name
             )
         except discord.Forbidden:
             await ctx.send("I don't have permission to delete messages here.")
@@ -215,41 +255,107 @@ class Purge(commands.Cog):
             await ctx.send(f"Discord rejected the request: {exc}")
             return
 
-        parts = [f"Deleted {len(deleted)} message(s)"]
-        if target is not None:
-            parts.append(f"from {target.display_name}")
-        if filter_name:
-            parts.append(f"matching {filter_name}")
-
-        summary = " ".join(parts) + "."
-
-        if skipped_old:
-            summary += (
-                f" Skipped {skipped_old} older than {BULK_AGE_DAYS} days, "
-                "which Discord won't bulk delete."
-            )
-
-        if len(deleted) < amount and not skipped_old:
-            summary += " That was everything I could find."
-
         await ctx.send(
             summary,
             delete_after=RESULT_LINGER,
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
-    @commands.command(name="purgehelp", aliases=["ph"])
+    @app_commands.command(
+        name="purge",
+        description="Bulk delete messages in this channel.",
+    )
+    @app_commands.default_permissions(manage_messages=True)
+    @app_commands.guild_only()
+    @app_commands.describe(
+        amount="How many messages to delete",
+        member="Only delete messages from this member",
+        only="Only delete messages of this kind",
+    )
+    @app_commands.choices(
+        only=[app_commands.Choice(name=name, value=name) for name in sorted(FILTERS)]
+    )
+    async def purge_slash(
+        self,
+        interaction: discord.Interaction,
+        amount: int,
+        member: discord.Member = None,
+        only: str = None,
+    ):
+        """Slash version of purge.
+
+        The prefix command reads its arguments in any order, which an app
+        command cannot express, so the two share run_purge rather than one
+        wrapping the other. Replies stay ephemeral because the invocation
+        itself leaves no message to clean up.
+        """
+        if not can_purge(interaction.user):
+            await interaction.response.send_message(
+                "You need Administrator or Manage Messages permission.",
+                ephemeral=True,
+            )
+            return
+
+        if not interaction.channel.permissions_for(interaction.guild.me).manage_messages:
+            await interaction.response.send_message(
+                "I need the Manage Messages permission here.", ephemeral=True
+            )
+            return
+
+        problem = amount_problem(amount)
+        if problem:
+            await interaction.response.send_message(problem, ephemeral=True)
+            return
+
+        described = describe_scope(amount, member, only)
+
+        if amount > CONFIRM_ABOVE:
+            confirm = ConfirmPurgeView(interaction.user.id, amount, described)
+            await interaction.response.send_message(
+                f"About to delete {described} in this channel. This can't be undone.",
+                view=confirm,
+                ephemeral=True,
+            )
+            await confirm.wait()
+            if not confirm.confirmed:
+                return
+        else:
+            await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            summary = await self.run_purge(
+                interaction.channel, interaction.user, amount, member, only
+            )
+        except discord.Forbidden:
+            summary = "I don't have permission to delete messages here."
+        except discord.HTTPException as exc:
+            summary = f"Discord rejected the request: {exc}"
+
+        if amount > CONFIRM_ABOVE:
+            await interaction.edit_original_response(content=summary, view=None)
+        else:
+            await interaction.followup.send(summary, ephemeral=True)
+
+    @commands.hybrid_command(
+        name="purgehelp",
+        aliases=["ph"],
+        description="Show the purge filters and some examples.",
+    )
+    @app_commands.default_permissions(manage_messages=True)
+    @commands.guild_only()
     async def purge_help(self, ctx):
         embed = discord.Embed(
             title="Purge",
             description=(
-                "`,purge 10` - the last 10 messages here\n"
-                "`,purge @someone 10` - their last 10 messages\n"
-                "`,purge bots 25` - the last 25 from bots\n"
-                "`,purge links 15` - the last 15 containing a link\n\n"
+                f"`{ctx.prefix}purge 10` - the last 10 messages here\n"
+                f"`{ctx.prefix}purge @someone 10` - their last 10 messages\n"
+                f"`{ctx.prefix}purge bots 25` - the last 25 from bots\n"
+                f"`{ctx.prefix}purge links 15` - the last 15 containing a link\n\n"
                 "**Filters** - "
                 + ", ".join(f"`{name}`" for name in sorted(FILTERS))
                 + "\n\n"
+                "Prefix arguments can be given in any order. The slash command "
+                "takes the same three as named options.\n\n"
                 "Pinned messages are never deleted unless you use the "
                 "`pinned` filter. Messages older than "
                 f"{BULK_AGE_DAYS} days can't be bulk deleted by Discord, "

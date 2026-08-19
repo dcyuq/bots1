@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 from roleutils import check_role_assignable, dangerous_perms
 
@@ -40,7 +41,13 @@ class Roles(commands.Cog):
         else:
             await ctx.send(f"Something went wrong: {error}")
 
-    @commands.command(name="role")
+    @commands.hybrid_command(
+        name="role",
+        description="Add or remove a role from a member.",
+    )
+    @app_commands.default_permissions(manage_roles=True)
+    @app_commands.describe(member="Who to change", role="The role to add or remove")
+    @commands.guild_only()
     @commands.cooldown(3, 10, commands.BucketType.user)
     async def role(
         self,

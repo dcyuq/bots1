@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 MAX_TEAMS = 20
@@ -214,7 +215,9 @@ class Scrims(commands.Cog):
         else:
             await ctx.send(f"Something went wrong: {error}")
 
-    @commands.command()
+    @commands.hybrid_command(description="Open the scrim thread generator.")
+    @app_commands.default_permissions(manage_messages=True)
+    @commands.guild_only()
     @commands.cooldown(1, 30, commands.BucketType.user)
     async def scrim(self, ctx):
         view = ScrimView(ctx.author.id)

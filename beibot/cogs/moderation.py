@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 from datetime import timedelta
 
@@ -37,7 +38,10 @@ class Moderation(commands.Cog):
             return True
         raise commands.MissingPermissions(["administrator"])
 
-    @commands.command()
+    @commands.hybrid_command(description="Remove a member from the server.")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(member="The member to kick", reason="Recorded in the audit log")
+    @commands.guild_only()
     @commands.bot_has_permissions(kick_members=True)
     async def kick(self, ctx, member: discord.Member, *, reason: str = "No reason provided"):
         problem = hierarchy_problem(ctx, member)
@@ -51,7 +55,10 @@ class Moderation(commands.Cog):
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
-    @commands.command()
+    @commands.hybrid_command(description="Ban a user from the server, even if they are not in it.")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(user="The user or ID to ban", reason="Recorded in the audit log")
+    @commands.guild_only()
     @commands.bot_has_permissions(ban_members=True)
     async def ban(self, ctx, user: discord.User, *, reason: str = "No reason provided"):
         member = ctx.guild.get_member(user.id)
@@ -73,7 +80,10 @@ class Moderation(commands.Cog):
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
-    @commands.command()
+    @commands.hybrid_command(description="Lift a ban on a user.")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(user="The user or ID to unban", reason="Recorded in the audit log")
+    @commands.guild_only()
     @commands.bot_has_permissions(ban_members=True)
     async def unban(self, ctx, user: discord.User, *, reason: str = "No reason provided"):
         try:
@@ -87,7 +97,10 @@ class Moderation(commands.Cog):
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
-    @commands.command()
+    @commands.hybrid_command(description="Mute a member for a number of minutes.")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(member="The member to time out", minutes="1 to 40320 (28 days)", reason="Recorded in the audit log")
+    @commands.guild_only()
     @commands.bot_has_permissions(moderate_members=True)
     async def timeout(self, ctx, member: discord.Member, minutes: int, *, reason: str = "No reason provided"):
         if minutes < 1 or minutes > MAX_TIMEOUT_MINUTES:
@@ -107,7 +120,10 @@ class Moderation(commands.Cog):
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
-    @commands.command()
+    @commands.hybrid_command(description="End a member's timeout early.")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(member="The member to release", reason="Recorded in the audit log")
+    @commands.guild_only()
     @commands.bot_has_permissions(moderate_members=True)
     async def untimeout(self, ctx, member: discord.Member, *, reason: str = "No reason provided"):
         if member.timed_out_until is None:

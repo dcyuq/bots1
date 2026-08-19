@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 import time
 import uuid
@@ -751,7 +752,17 @@ class Send(commands.Cog):
         else:
             await ctx.send(f"Something went wrong: {error}")
 
-    @commands.command(name="send", aliases=["say"])
+    @commands.hybrid_command(
+        name="send",
+        aliases=["say"],
+        description="Post a message or embed as the bot, now or scheduled.",
+    )
+    @app_commands.default_permissions(manage_messages=True)
+    @app_commands.describe(
+        channel="Where to post. Leave both blank to open the composer.",
+        text="Plain text to post straight away",
+    )
+    @commands.guild_only()
     @commands.cooldown(1, 10, commands.BucketType.user)
     async def send(self, ctx, channel: discord.TextChannel = None, *, text: str = None):
         if channel is not None and text:
@@ -785,7 +796,13 @@ class Send(commands.Cog):
         view.message = message
 
 
-    @commands.command(name="scheduled", aliases=["schedules"])
+    @commands.hybrid_command(
+        name="scheduled",
+        aliases=["schedules"],
+        description="List and cancel scheduled messages.",
+    )
+    @app_commands.default_permissions(manage_messages=True)
+    @commands.guild_only()
     async def scheduled_list(self, ctx):
         jobs = sorted(guild_schedules(ctx.guild.id), key=lambda j: j["when"])
 
@@ -818,7 +835,14 @@ class Send(commands.Cog):
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
-    @commands.command(name="timezone", aliases=["tz"])
+    @commands.hybrid_command(
+        name="timezone",
+        aliases=["tz"],
+        description="View or change the server timezone.",
+    )
+    @app_commands.default_permissions(manage_messages=True)
+    @app_commands.describe(name="An Area/City name such as Asia/Manila")
+    @commands.guild_only()
     async def timezone_command(self, ctx, *, name: str = None):
         if name:
             ok, message = set_timezone(ctx.guild.id, name.strip())

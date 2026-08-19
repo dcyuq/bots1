@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 from storage import Store
 from roleutils import assignable_now, check_role_assignable
@@ -305,7 +306,13 @@ class Autorole(commands.Cog):
             settings["role_ids"].remove(role.id)
             save()
 
-    @commands.command(name="autorole", aliases=["arole"])
+    @commands.hybrid_command(
+        name="autorole",
+        aliases=["arole"],
+        description="Configure the roles given when someone joins.",
+    )
+    @app_commands.default_permissions(manage_roles=True)
+    @commands.guild_only()
     async def autorole(self, ctx: commands.Context):
         settings = ensure_settings(ctx.guild.id)
 

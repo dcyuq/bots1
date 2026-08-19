@@ -4,6 +4,7 @@ import asyncio
 
 import aiohttp
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 CREATOR_SHARE = 0.70
@@ -61,7 +62,12 @@ class GamePass(commands.Cog):
         except (aiohttp.ClientError, asyncio.TimeoutError):
             return None
 
-    @commands.command(name="gamepass", aliases=["gp", "scan"])
+    @commands.hybrid_command(
+        name="gamepass",
+        aliases=["gp", "scan"],
+        description="Look up a Roblox gamepass and its creator payout.",
+    )
+    @app_commands.describe(link="Gamepass link or ID")
     async def gamepass(self, ctx, *, link: str = None):
         if link is None:
             await ctx.send(

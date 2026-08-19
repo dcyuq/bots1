@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 import logging
 from logging.handlers import RotatingFileHandler
@@ -37,9 +38,28 @@ bot = commands.Bot(
 )
 
 
+def unwrap(error):
+    """Strip the wrappers a slash invocation adds around the real error.
+
+    A hybrid command run as a slash command surfaces failures as
+    HybridCommandError wrapping CommandInvokeError wrapping whatever
+    actually went wrong, so the same handler can serve both surfaces
+    once the layers are off.
+    """
+    while True:
+        if isinstance(error, commands.HybridCommandError):
+            error = error.original
+        elif isinstance(error, app_commands.CommandInvokeError):
+            error = error.original
+        else:
+            return error
+
+
 @bot.event
 async def on_ready():
+    tree_size = len(bot.tree.get_commands())
     print(f"{BOT_NAME} online as {bot.user} in {len(bot.guilds)} guild(s)")
+    print(f"Slash tree holds {tree_size} top level command(s), not yet synced")
 
 
 @bot.event
@@ -51,6 +71,8 @@ async def on_command_error(ctx, error):
         return
     if ctx.cog is not None and ctx.cog.has_error_handler():
         return
+
+    error = unwrap(error)
 
     if isinstance(error, commands.MissingRequiredArgument):
         await ctx.send(f"Missing argument: `{error.param.name}`")

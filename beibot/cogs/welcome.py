@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 from storage import Store
 
@@ -690,11 +691,23 @@ class Welcome(commands.Cog):
         )
         view.message = message
 
-    @commands.command(name="welcome", aliases=["wel"])
+    @commands.hybrid_command(
+        name="welcome",
+        aliases=["wel"],
+        description="Configure the join message.",
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    @commands.guild_only()
     async def welcome(self, ctx: commands.Context):
         await self.open_panel(ctx, "join")
 
-    @commands.command(name="goodbye", aliases=["leave"])
+    @commands.hybrid_command(
+        name="goodbye",
+        aliases=["leave"],
+        description="Configure the leave message.",
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    @commands.guild_only()
     async def goodbye(self, ctx: commands.Context):
         await self.open_panel(ctx, "leave")
 

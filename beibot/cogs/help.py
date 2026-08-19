@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 from prefixes import prefix_for
 
@@ -19,6 +20,7 @@ CATEGORY_META = {
     "Roles": "Add or remove roles from members.",
     "Welcome": "Greet joiners and announce leavers.",
     "GroupCheck": "Check Roblox group membership and payout eligibility.",
+    "Stamp": "Loyalty cards that fill up as members earn stamps.",
     "Help": "This menu.",
 }
 
@@ -50,6 +52,8 @@ COMMAND_HELP = {
     "goodbye": "Configure the leave message.",
     "eligible": "Check a Roblox user against the configured groups.",
     "gc": "Configure the eligibility checker.",
+    "stamps": "Show a stamp card.",
+    "stamp": "Give a stamp, or manage cards and setup.",
 }
 
 SUBCOMMAND_HELP = {
@@ -63,6 +67,16 @@ SUBCOMMAND_HELP = {
     "gc setdays": "Set the eligibility threshold.",
     "gc override": "Backdate a user's first-seen date.",
     "gc clear": "Wipe a user's tracking records.",
+    "stamp add": "Give a member one or more stamps.",
+    "stamp remove": "Take stamps back off a card.",
+    "stamp set": "Set a card to an exact count.",
+    "stamp clear": "Delete a member's stamp record.",
+    "stamp preview": "Preview one stage of the card.",
+    "stamp setup": "Show the card setup and what is missing.",
+    "stamp setup upload": "Attach the card images in order.",
+    "stamp setup image": "Set the image for one stage.",
+    "stamp setup reward": "Set, clear or list stamp rewards.",
+    "stamp setup reset": "Delete the uploaded card images.",
     "prefix reset": "Go back to the default prefix.",
 }
 
@@ -108,7 +122,8 @@ def home_embed(bot, ctx, categories, prefix):
     embed = discord.Embed(
         title="Command Help",
         description=(
-            f"Prefix is `{prefix}`\n"
+            f"Prefix is `{prefix}`. Nearly everything here also works as a "
+            "slash command.\n"
             f"Use the menu below to browse a category, or "
             f"`{prefix}help <command>` for details on one command."
         ),
@@ -258,7 +273,12 @@ class Help(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="help", aliases=["h", "commands"])
+    @commands.hybrid_command(
+        name="help",
+        aliases=["h", "commands"],
+        description="Show the command menu.",
+    )
+    @app_commands.describe(query="A single command to see details for")
     async def help_command(self, ctx: commands.Context, *, query: str = None):
         prefix = prefix_for(ctx.guild.id if ctx.guild else None)
 

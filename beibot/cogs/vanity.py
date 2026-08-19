@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 
 from storage import Store
@@ -246,7 +247,13 @@ class Vanity(commands.Cog):
         else:
             await ctx.send(f"Something went wrong: {error}")
 
-    @commands.command(name="vanity", aliases=["vr"])
+    @commands.hybrid_command(
+        name="vanity",
+        aliases=["vr"],
+        description="Configure the role awarded for a keyword in a status.",
+    )
+    @app_commands.default_permissions(manage_roles=True)
+    @commands.guild_only()
     async def vanity(self, ctx: commands.Context):
         settings = get_guild_config(ctx.guild.id)
 
@@ -277,7 +284,12 @@ class Vanity(commands.Cog):
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
-    @commands.command(name="unvanity")
+    @commands.hybrid_command(
+        name="unvanity",
+        description="Turn the vanity status role off.",
+    )
+    @app_commands.default_permissions(manage_roles=True)
+    @commands.guild_only()
     async def unvanity(self, ctx: commands.Context):
         if config.pop(str(ctx.guild.id), None) is None:
             await ctx.send("No vanity role is configured here.")

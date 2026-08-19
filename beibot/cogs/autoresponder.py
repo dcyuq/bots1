@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 from storage import Store
 
@@ -365,7 +366,12 @@ class AutoResponder(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="autoresponder", aliases=["ar"])
+    @commands.hybrid_command(
+        name="autoresponder",
+        aliases=["ar"],
+        description="Open the autoresponder panel.",
+    )
+    @app_commands.default_permissions(manage_messages=True)
     @commands.guild_only()
     async def autoresponder(self, ctx: commands.Context):
         if not can_manage(ctx.author):

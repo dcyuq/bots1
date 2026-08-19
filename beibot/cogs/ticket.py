@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 from storage import Store, IntKeyStore
 import time
@@ -1371,7 +1372,15 @@ class Tickets(commands.Cog):
         )
         view.message = message
 
-    @commands.group(name="ticketsetup", aliases=["tsetup"], invoke_without_command=True)
+    @commands.hybrid_group(
+        name="ticketsetup",
+        aliases=["tsetup"],
+        invoke_without_command=True,
+        fallback="menu",
+        description="Set up or reconfigure the ticket system.",
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    @commands.guild_only()
     async def ticketsetup(self, ctx):
         settings = get_config(ctx.guild.id)
         state = "configured" if is_configured(settings) else "not set up yet"
@@ -1380,16 +1389,20 @@ class Tickets(commands.Cog):
             title="Ticket Setup",
             description=(
                 f"This server is **{state}**.\n\n"
-                "`,ticketsetup fast` - creates one default button and opens the "
-                "builder so you can pick your channels and publish.\n\n"
-                "`,ticketsetup custom` - same builder, starting empty.\n\n"
-                "`,ticketsetup edit` - reopen the builder on an existing setup."
+                f"`{ctx.prefix}ticketsetup fast` - creates one default button and "
+                "opens the builder so you can pick your channels and publish.\n\n"
+                f"`{ctx.prefix}ticketsetup custom` - same builder, starting empty.\n\n"
+                f"`{ctx.prefix}ticketsetup edit` - reopen the builder on an "
+                "existing setup."
             ),
             color=discord.Color.dark_theme(),
         )
         await ctx.send(embed=embed)
 
-    @ticketsetup.command(name="fast")
+    @ticketsetup.command(
+        name="fast",
+        description="Quick setup with one default button, then open the builder.",
+    )
     async def setup_fast(self, ctx):
         settings = ensure_config(ctx.guild.id)
 
@@ -1410,27 +1423,40 @@ class Tickets(commands.Cog):
         )
         await self.open_builder(ctx, settings)
 
-    @ticketsetup.command(name="custom")
+    @ticketsetup.command(
+        name="custom",
+        description="Open the full builder, starting empty.",
+    )
     async def setup_custom(self, ctx):
         settings = ensure_config(ctx.guild.id)
         save_config()
         await self.open_builder(ctx, settings)
 
-    @ticketsetup.command(name="edit")
+    @ticketsetup.command(
+        name="edit",
+        description="Reopen the builder on an existing setup.",
+    )
     async def setup_edit(self, ctx):
         if get_config(ctx.guild.id) is None:
             await ctx.send(
-                "Nothing to edit yet. Run `,ticketsetup fast` or `,ticketsetup custom` first."
+                f"Nothing to edit yet. Run `{ctx.prefix}ticketsetup fast` or "
+                f"`{ctx.prefix}ticketsetup custom` first."
             )
             return
         settings = ensure_config(ctx.guild.id)
         await self.open_builder(ctx, settings)
 
-    @commands.command(name="ticketstats", aliases=["tstats"])
+    @commands.hybrid_command(
+        name="ticketstats",
+        aliases=["tstats"],
+        description="Show open, unclaimed and lifetime ticket counts.",
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    @commands.guild_only()
     async def ticket_stats(self, ctx):
         settings = get_config(ctx.guild.id)
         if settings is None:
-            await ctx.send("Run `,ticketsetup` first.")
+            await ctx.send(f"Run `{ctx.prefix}ticketsetup` first.")
             return
 
         open_here = [d for d in tickets.values() if d["guild_id"] == ctx.guild.id]
