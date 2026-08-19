@@ -1,4 +1,6 @@
 import discord
+from discord import app_commands 
+from discord.ext import commands 
 from discord.ext import commands
 import logging
 from logging.handlers import RotatingFileHandler
@@ -35,6 +37,14 @@ bot = commands.Bot(
     ),
 )
 
+def unwrap(error):
+    while True:
+        if isinstance(error, commands.HybridCommandError):
+            error = error.original
+        elif isinstance(error, app_commands.CommandInvokeError):
+            error = error.original
+        else:
+            return error
 
 @bot.event
 async def on_ready():
@@ -51,6 +61,8 @@ async def on_command_error(ctx, error):
     if ctx.cog is not None and ctx.cog.has_error_handler():
         return
 
+    error = unwrap(error)
+
     if isinstance(error, commands.MissingRequiredArgument):
         await ctx.send(f"Missing argument: `{error.param.name}`")
         return
@@ -63,7 +75,6 @@ async def on_command_error(ctx, error):
 
     await ctx.send(f"`{type(error).__name__}: {error}`")
     raise error
-
 
 async def load_cogs():
     loaded, failed = 0, 0

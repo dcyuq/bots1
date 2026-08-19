@@ -1,6 +1,7 @@
 import asyncio
 
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 
 from storage import Store, IntKeyStore
@@ -503,7 +504,12 @@ class StickyNotes(commands.Cog):
         except (discord.Forbidden, discord.HTTPException):
             return None
 
-    @commands.command(name="stickynote", aliases=["sn"])
+    @commands.hybrid_command(
+        name="stickynote",
+        aliases=["sn"],
+        description="Open the sticky note panel.",
+    )
+    @app_commands.default_permissions(manage_messages=True)
     @commands.guild_only()
     async def stickynote(self, ctx: commands.Context):
         notes = get_guild_notes(ctx.guild.id)
@@ -523,7 +529,12 @@ class StickyNotes(commands.Cog):
         view = StickyPanelView(ctx.guild.id, ctx.author.id)
         view.message = await ctx.send(embed=embed, view=view)
 
-    @commands.command(name="unsticky", aliases=["unsn"])
+    @commands.hybrid_command(
+        name="unsticky",
+        aliases=["unsn"],
+        description="Remove the active sticky note in this channel.",
+    )
+    @app_commands.default_permissions(manage_messages=True)
     @commands.guild_only()
     async def unsticky(self, ctx: commands.Context):
         if ctx.channel.id not in active_stickies:

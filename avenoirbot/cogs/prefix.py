@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 from prefixes import (
     DEFAULT_PREFIX,
@@ -44,7 +45,12 @@ class Prefix(commands.Cog):
         else:
             await ctx.send(f"Something went wrong: {error}")
 
-    @commands.group(name="prefix", invoke_without_command=True)
+    @commands.hybrid_group(
+        name="prefix",
+        invoke_without_command=True,
+        fallback="show",
+        description="Show the command prefix for this server.",
+    )
     @commands.guild_only()
     async def prefix(self, ctx):
         current = prefix_for(ctx.guild.id)
@@ -73,7 +79,8 @@ class Prefix(commands.Cog):
         )
         await ctx.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
-    @prefix.command(name="set")
+    @prefix.command(name="set", description="Change the prefix for this server.")
+    @app_commands.describe(new="The new prefix, quoted if it ends in a space")
     @owner_or_admin()
     @commands.cooldown(1, 5, commands.BucketType.guild)
     async def prefix_set(self, ctx, *, new: str = None):
@@ -94,7 +101,11 @@ class Prefix(commands.Cog):
             f"Prefix changed to `{value}`. Try `{value}help`."
         )
 
-    @prefix.command(name="reset", aliases=["default"])
+    @prefix.command(
+        name="reset",
+        aliases=["default"],
+        description="Go back to the default prefix.",
+    )
     @owner_or_admin()
     async def prefix_reset(self, ctx):
         removed = clear_prefix(ctx.guild.id)

@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 from prefixes import prefix_for
 
@@ -216,7 +217,12 @@ class Help(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="help", aliases=["h", "commands"])
+    @commands.hybrid_command(
+        name="help",
+        aliases=["h", "commands"],
+        description="Show the command menu.",
+    )
+    @app_commands.describe(query="A single command to see details for")
     async def help_command(self, ctx: commands.Context, *, query: str = None):
         prefix = prefix_for(ctx.guild.id if ctx.guild else None)
 
