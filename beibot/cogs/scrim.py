@@ -20,7 +20,7 @@ class ScrimModal(discord.ui.Modal, title="Scrim Setup"):
         placeholder="e.g. cezu scrims!",
         style=discord.TextStyle.paragraph,
         required=True,
-        max_length=1000,
+        max_length=4000,
     )
 
     team_count = discord.ui.TextInput(
