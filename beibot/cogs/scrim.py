@@ -10,6 +10,23 @@ def can_manage(member: discord.Member) -> bool:
     return perms.administrator or perms.manage_messages
 
 
+def mentions_for(channel: discord.TextChannel, author: discord.Member):
+    """Work out which pings the description is allowed to fire.
+
+    The bot is created with a global allowed_mentions that blocks everyone
+    and role pings, so anything that should ping has to say so explicitly
+    here. Role and user pings are open because the command is already
+    gated on Manage Messages, but everyone and here follow the author's
+    own permission in the target channel rather than the bot's.
+    """
+    perms = channel.permissions_for(author)
+    return discord.AllowedMentions(
+        everyone=perms.mention_everyone,
+        roles=True,
+        users=True,
+    )
+
+
 class ScrimModal(discord.ui.Modal, title="Scrim Setup"):
     def __init__(self, channel: discord.TextChannel):
         super().__init__()
@@ -64,15 +81,31 @@ class ScrimModal(discord.ui.Modal, title="Scrim Setup"):
 
         await interaction.response.defer(ephemeral=True)
 
-        try:
-            await self.channel.send(
-                self.description.value,
-                allowed_mentions=discord.AllowedMentions.none(),
+        text = self.description.value
+        mentions = mentions_for(self.channel, interaction.user)
+
+        warnings = []
+        wants_mass = "@everyone" in text or "@here" in text
+        if wants_mass and not mentions.everyone:
+            warnings.append(
+                "You don't have Mention Everyone in that channel, so "
+                "@everyone and @here were posted as plain text."
             )
+        elif wants_mass and not permissions.mention_everyone:
+            warnings.append(
+                "I don't have Mention Everyone in that channel, so "
+                "@everyone and @here were posted as plain text."
+            )
+
+        try:
+            await self.channel.send(text, allowed_mentions=mentions)
 
             created = 0
             for i in range(1, count + 1):
-                team_message = await self.channel.send(f"``team {i}``")
+                team_message = await self.channel.send(
+                    f"``team {i}``",
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
                 await team_message.create_thread(name=f"team {i}")
                 created += 1
         except discord.Forbidden:
@@ -89,10 +122,10 @@ class ScrimModal(discord.ui.Modal, title="Scrim Setup"):
             )
             return
 
-        await interaction.followup.send(
-            f"Created {created} scrim thread(s) in {self.channel.mention}.",
-            ephemeral=True
-        )
+        lines = [f"Created {created} scrim thread(s) in {self.channel.mention}."]
+        lines.extend(warnings)
+
+        await interaction.followup.send("\n".join(lines), ephemeral=True)
 
 
 class ScrimView(discord.ui.View):
@@ -105,7 +138,7 @@ class ScrimView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
             await interaction.response.send_message(
-                "Run `,scrim` yourself to use this panel.",
+                "Run the scrim command yourself to use this panel.",
                 ephemeral=True
             )
             return False
