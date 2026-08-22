@@ -54,6 +54,7 @@ COMMAND_HELP = {
     "gc": "Configure the eligibility checker.",
     "stamps": "Show a stamp card.",
     "stamp": "Give a stamp, or manage cards and setup.",
+    "givestampcard": "Hand a member a fresh blank stamp card.",
 }
 
 SUBCOMMAND_HELP = {

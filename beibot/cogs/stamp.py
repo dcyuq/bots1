@@ -54,7 +54,17 @@ def next_milestone(config, count, maximum):
 
 
 def blank_record():
-    return {"count": 0, "completed": 0, "first_seen": 0.0, "last": 0.0}
+    return {"count": 0, "completed": 0, "first_seen": 0.0, "last": 0.0, "active": False}
+
+
+def card_active(record):
+    """Whether this member is currently holding a card.
+
+    Records written before cards had to be issued carry no active flag, so
+    a missing key means yes. blank_record sets it to False explicitly, which
+    is what makes an unknown member read as having no card.
+    """
+    return bool(record.get("active", True))
 
 
 def suffix_for(attachment):
@@ -172,13 +182,20 @@ class StaffRow(discord.ui.ActionRow):
 
     @discord.ui.button(label="Stamp", style=discord.ButtonStyle.success)
     async def add_one(self, interaction, button):
-        result = self.cog.push_stamp(interaction.guild.id, self.member.id, 1)
-        if result is None:
+        status, record, notes, celebrate, display = self.cog.push_stamp(
+            interaction.guild.id, self.member.id, 1
+        )
+        if status == "nosetup":
             await interaction.response.send_message("Stamp cards are not set up.", ephemeral=True)
             return
-        record, notes, celebrate = result
+        if status == "nocard":
+            await interaction.response.send_message(
+                self.member.display_name + " has no active card. Give them one first.",
+                ephemeral=True,
+            )
+            return
         await self.cog.refresh_card(
-            interaction, self.member, record["count"], record["completed"], notes, celebrate
+            interaction, self.member, display, record["completed"], notes, celebrate
         )
 
     @discord.ui.button(label="Override", style=discord.ButtonStyle.secondary)
@@ -197,6 +214,45 @@ class StaffRow(discord.ui.ActionRow):
             view=ConfirmReset(self.cog, self.member, interaction.message),
             ephemeral=True,
         )
+
+
+class IssueRow(discord.ui.ActionRow):
+    def __init__(self, cog, member):
+        super().__init__()
+        self.cog = cog
+        self.member = member
+
+    async def interaction_check(self, interaction):
+        if interaction.user.guild_permissions.manage_messages:
+            return True
+        await interaction.response.send_message(
+            "You need the Manage Messages permission to do that.", ephemeral=True
+        )
+        return False
+
+    @discord.ui.button(label="Give a card", style=discord.ButtonStyle.success)
+    async def give(self, interaction, button):
+        record = self.cog.issue_card(interaction.guild.id, self.member.id)
+        if record is None:
+            await interaction.response.send_message(
+                self.member.display_name + " already has a card.", ephemeral=True
+            )
+            return
+        await self.cog.refresh_card(
+            interaction, self.member, 0, record["completed"], "New card issued.", False
+        )
+
+
+class NoCardView(discord.ui.LayoutView):
+    def __init__(self, heading, body, staff, cog=None, member=None):
+        super().__init__(timeout=None if not staff else 900)
+        container = discord.ui.Container(accent_colour=NEUTRAL)
+        container.add_item(discord.ui.TextDisplay(heading))
+        container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
+        container.add_item(discord.ui.TextDisplay(body))
+        if staff and cog is not None and member is not None:
+            container.add_item(IssueRow(cog, member))
+        self.add_item(container)
 
 
 class CardView(discord.ui.LayoutView):
@@ -300,7 +356,7 @@ class Stamp(commands.Cog):
         block = self.guild_block(self.store.load(), guild_id)
         return block["users"].get(str(user_id), blank_record())
 
-    def write_record(self, guild_id, user_id, count, completed):
+    def write_record(self, guild_id, user_id, count, completed, active=True):
         data = self.store.load()
         block = self.guild_block(data, guild_id)
         record = block["users"].get(str(user_id), blank_record())
@@ -310,15 +366,45 @@ class Stamp(commands.Cog):
         record["count"] = count
         if completed is not None:
             record["completed"] = max(0, completed)
+        record["active"] = bool(active)
+        record["last"] = now
+        block["users"][str(user_id)] = record
+        self.store.save(data)
+        return record
+
+    def issue_card(self, guild_id, user_id):
+        """Hand a member a fresh blank card.
+
+        Returns None when they are already holding one, so the caller can
+        say so rather than quietly wiping progress.
+        """
+        data = self.store.load()
+        block = self.guild_block(data, guild_id)
+        record = block["users"].get(str(user_id), blank_record())
+        if str(user_id) in block["users"] and card_active(record):
+            return None
+
+        now = time.time()
+        if not record["first_seen"]:
+            record["first_seen"] = now
+        record["count"] = 0
+        record["active"] = True
         record["last"] = now
         block["users"][str(user_id)] = record
         self.store.save(data)
         return record
 
     def push_stamp(self, guild_id, user_id, delta):
+        """Move a member's count and report what happened.
+
+        Returns a status first so callers can tell the three failure modes
+        apart. A card stops at its last stamp rather than rolling over, and
+        anything left in the batch is reported instead of silently starting
+        the next card.
+        """
         config = self.config_for(guild_id)
         if self.stage_count(guild_id, config) < 2:
-            return None
+            return "nosetup", None, "", False, 0
 
         maximum = self.maximum_for(guild_id, config)
         marks = milestones_for(config)
@@ -326,27 +412,41 @@ class Stamp(commands.Cog):
         data = self.store.load()
         block = self.guild_block(data, guild_id)
         record = block["users"].get(str(user_id), blank_record())
+
+        if not card_active(record):
+            return "nocard", record, "", False, 0
+
         now = time.time()
         if not record["first_seen"]:
             record["first_seen"] = now
 
         total = record["count"]
-        finished = 0
+        finished = False
         reached = []
+        leftover = 0
 
         if delta > 0:
-            for _ in range(delta):
+            for step in range(delta):
+                if finished:
+                    leftover = delta - step
+                    break
                 total += 1
                 if total in marks:
                     reached.append((total, marks[total]))
                 if total >= maximum:
-                    finished += 1
-                    total = 0
+                    finished = True
         else:
             total = max(0, total + delta)
 
-        record["count"] = total
-        record["completed"] = max(0, record["completed"] + finished)
+        display = total
+
+        if finished:
+            record["completed"] = max(0, record["completed"] + 1)
+            record["active"] = False
+            record["count"] = 0
+        else:
+            record["count"] = total
+
         record["last"] = now
         block["users"][str(user_id)] = record
         self.store.save(data)
@@ -355,9 +455,14 @@ class Stamp(commands.Cog):
         for index, prize in reached:
             notes.append("Reward unlocked at " + str(index) + ": " + prize)
         if finished:
-            notes.append("Card complete.")
+            notes.append("Card complete. Ask staff for a new one to keep going.")
+        if leftover:
+            word = "stamp" if leftover == 1 else "stamps"
+            notes.append(
+                str(leftover) + " " + word + " were not applied, the card filled up first."
+            )
 
-        return record, "\n".join(notes), bool(finished or reached)
+        return "ok", record, "\n".join(notes), bool(finished or reached), display
 
     def build_card(self, guild_id, member, count, completed, note, complete, staff):
         config = self.config_for(guild_id)
@@ -484,9 +589,48 @@ class Stamp(commands.Cog):
         record = self.guild_block(self.store.load(), ctx.guild.id)["users"].get(
             str(member.id), blank_record()
         )
+        if not card_active(record):
+            ctx.command.reset_cooldown(ctx)
+            await self.send_no_card(ctx, member)
+            return
         await self.send_card(ctx, member, config, record["count"], record["completed"], "")
 
-    @commands.hybrid_group(name="stamp", invoke_without_command=True)
+    @commands.hybrid_command(
+        name="givestampcard",
+        aliases=["givecard", "issuecard", "newcard"],
+        description="Hand a member a fresh blank stamp card.",
+    )
+    @app_commands.default_permissions(manage_messages=True)
+    @app_commands.describe(member="Who to give a card to")
+    @commands.guild_only()
+    async def give_stamp_card(self, ctx, member: discord.Member):
+        if member.bot:
+            await ctx.send("Bots do not collect stamps.")
+            return
+
+        config = self.config_for(ctx.guild.id)
+        if self.stage_count(ctx.guild.id, config) < 2:
+            await ctx.send("Run " + ctx.prefix + "stamp setup first.")
+            return
+
+        record = self.issue_card(ctx.guild.id, member.id)
+        if record is None:
+            current = self.record_for(ctx.guild.id, member.id)
+            await ctx.send(
+                member.display_name + " already has a card with "
+                + str(current["count"]) + " stamp(s) on it. Use "
+                + ctx.prefix + "stamp clear to wipe them first."
+            )
+            return
+
+        note = "New card issued."
+        if record["completed"]:
+            word = "card" if record["completed"] == 1 else "cards"
+            note += " That is " + str(record["completed"] + 1) + " overall, with "
+            note += str(record["completed"]) + " full " + word + " already done."
+        await self.send_card(ctx, member, config, 0, record["completed"], note)
+
+    @commands.hybrid_group(name="stamp", invoke_without_command=True, fallback="give")
     @app_commands.default_permissions(manage_messages=True)
     @commands.guild_only()
     async def stamp(self, ctx, member: discord.Member = None):
@@ -556,16 +700,52 @@ class Stamp(commands.Cog):
             await ctx.send("Bots do not collect stamps.")
             return
 
-        result = self.push_stamp(ctx.guild.id, member.id, delta)
-        if result is None:
+        status, record, notes, celebrate, display = self.push_stamp(
+            ctx.guild.id, member.id, delta
+        )
+        if status == "nosetup":
             await ctx.send("Run " + ctx.prefix + "stamp setup first.")
             return
+        if status == "nocard":
+            await ctx.send(
+                member.display_name + " has no active card. Issue one with "
+                + ctx.prefix + "givestampcard " + member.display_name + "."
+            )
+            return
 
-        record, notes, celebrate = result
         config = self.config_for(ctx.guild.id)
         await self.send_card(
-            ctx, member, config, record["count"], record["completed"], notes, complete=celebrate
+            ctx, member, config, display, record["completed"], notes, complete=celebrate
         )
+
+    async def send_no_card(self, ctx, member):
+        """Explain that a card has to be handed out, with a button for staff."""
+        record = self.record_for(ctx.guild.id, member.id)
+        staff = ctx.author.guild_permissions.manage_messages
+        mine = member.id == ctx.author.id
+
+        heading = "**Stamp Card**\n" + member.mention
+
+        lines = []
+        if mine:
+            lines.append("You do not have a card yet. Ask a staff member for one.")
+        else:
+            lines.append(member.display_name + " does not have a card right now.")
+
+        completed = record.get("completed", 0)
+        if completed:
+            word = "card" if completed == 1 else "cards"
+            lines.append(str(completed) + " full " + word + " finished so far, which is kept.")
+
+        if staff:
+            lines.append("")
+            lines.append(
+                "Hand one over below, or run "
+                + ctx.prefix + "givestampcard " + member.display_name + "."
+            )
+
+        view = NoCardView(heading, "\n".join(lines), staff, self, member)
+        await ctx.send(view=view, allowed_mentions=discord.AllowedMentions.none())
 
     @stamp.group(
         name="setup",
@@ -609,8 +789,9 @@ class Stamp(commands.Cog):
             + "`stamp setup reward 8 free milk tea` to set a reward at any stamp number\n"
             + prefix
             + "`stamp preview 3`\n\n"
-            "Discord allows **10 attachments per message**, so longer cards need a __second__ upload "
-            "using " + prefix + "`stamp setup upload 10` to carry on from stage ten. "
+            "Discord allows **10 attachments per message**, so longer cards need a __second__ upload. "
+            "Just run " + prefix + "`stamp setup upload` again with the next batch and it "
+            "carries on from where the last one stopped. "
             "The number of images sets the card length, so nine images means eight stamps then a reset."
         )
 
@@ -621,20 +802,49 @@ class Stamp(commands.Cog):
         await ctx.send(view=view)
 
     @setup.command(name="upload", aliases=["images"], with_app_command=False)
-    async def setup_upload(self, ctx, start: int = 0):
+    async def setup_upload(self, ctx, *, options: str = ""):
+        """Save attached images to consecutive stages.
+
+        With no options the batch is appended after the last stage already
+        uploaded, so a card longer than ten images needs no arithmetic. A
+        bare number overrides that and starts there instead. The word
+        reverse flips the batch, which is the fix when a desktop file
+        picker has handed the images over newest first.
+        """
         attachments = self.collect_images(ctx)
         if not attachments:
             await ctx.send("Attach your card images in order, or reply to a message holding them.")
             return
+
+        start = None
+        reverse = False
+        for token in options.split():
+            lowered = token.lower()
+            if lowered in ("reverse", "rev", "desc", "backwards"):
+                reverse = True
+                continue
+            try:
+                start = int(token)
+            except ValueError:
+                await ctx.send("I did not understand `" + token + "`. Give a stage number, or reverse.")
+                return
+
+        config = self.config_for(ctx.guild.id)
+        if start is None:
+            start = self.stage_count(ctx.guild.id, config)
+
         if start < 0 or start + len(attachments) > MAX_STAGES:
             await ctx.send("A card can hold at most " + str(MAX_STAGES) + " stages.")
             return
+
+        if reverse:
+            attachments = list(reversed(attachments))
 
         data = self.store.load()
         block = self.guild_block(data, ctx.guild.id)
         stages = block["config"]["stages"]
 
-        saved = 0
+        saved = []
         problems = []
         for offset, attachment in enumerate(attachments):
             index = start + offset
@@ -643,20 +853,45 @@ class Stamp(commands.Cog):
                 problems.append(result)
                 continue
             stages[str(index)] = result
-            saved += 1
+            saved.append((index, attachment.filename))
 
         block["config"]["version"] = int(block["config"].get("version", 0)) + 1
         self.store.save(data)
 
         total = self.stage_count(ctx.guild.id, block["config"])
-        lines = ["Saved " + str(saved) + " image(s) starting at stage " + str(start) + "."]
+        lines = ["Saved " + str(len(saved)) + " image(s)."]
+        for index, filename in saved:
+            label = "blank card" if index == 0 else "stamp " + str(index)
+            lines.append("Stage " + str(index) + " (" + label + ") is " + filename)
         if problems:
             lines.extend(problems)
+
+        lines.append("")
         if total >= 2:
             lines.append("Card is ready with " + str(total - 1) + " stamps before a reset.")
         else:
             lines.append("Upload at least a blank card and one stamped version to go live.")
-        await ctx.send("\n".join(lines))
+
+        gaps, highest = self.missing_stages(ctx.guild.id, block["config"])
+        if gaps:
+            listed = ", ".join(str(index) for index in gaps)
+            lines.append(
+                "Stage " + listed + " is still empty, so the card stops short at "
+                + str(total - 1) + ". Images above the gap are ignored until it is filled."
+            )
+        elif len(saved) < MAX_STAGES - start:
+            lines.append(
+                "Attach the next batch and run " + ctx.prefix
+                + "`stamp setup upload` again to carry on from stage " + str(total) + "."
+            )
+
+        if saved:
+            lines.append(
+                "Wrong way round? " + ctx.prefix + "`stamp setup upload "
+                + str(start) + " reverse` redoes this batch backwards."
+            )
+
+        await ctx.send("\n".join(lines)[:2000])
 
     @setup.command(
         name="image",
