@@ -984,6 +984,12 @@ class Bets(commands.Cog):
     ) -> None:
         state = _guild_state(_load(), ctx.guild.id)
         if game is None:
+            passed = (ctx.subcommand_passed or "").strip() if ctx.interaction is None else ""
+            if passed and not passed.isdigit():
+                raise BetError(
+                    f"`{passed}` is not a bet subcommand or a game id. "
+                    f"Try `{ctx.clean_prefix}help bet` for the list."
+                )
             games = _open_games(state)
             if not games:
                 await ctx.reply(
@@ -1102,6 +1108,84 @@ class Bets(commands.Cog):
         embed.set_footer(
             text=f"{pending:,} cookies still riding \u00b7 wallet {_balance(ctx.guild.id, ctx.author.id):,}"
         )
+        await ctx.reply(embed=embed, mention_author=False, ephemeral=True)
+
+    @bet.command(name="wallet")
+    async def bet_wallet(self, ctx: commands.Context, member: Optional[discord.Member] = None) -> None:
+        target = member or ctx.author
+        if target.bot:
+            raise BetError("Bots do not hold cookies.")
+        await ctx.reply(
+            f"{target.display_name} holds **{_balance(ctx.guild.id, target.id):,}** {COOKIE}.",
+            mention_author=False,
+        )
+
+    def _log_grant(self, guild_id: int, actor: int, target: int, delta: int, reason: Optional[str]) -> None:
+        data = _load()
+        state = _guild_state(data, guild_id)
+        log = state.setdefault("grants", [])
+        log.append({"actor": actor, "target": target, "delta": delta, "reason": reason, "at": _now()})
+        del log[:-GRANT_LOG_LIMIT]
+        _save(data)
+
+    async def _transfer(
+        self, ctx: commands.Context, member: discord.Member, amount: int, reason: Optional[str]
+    ) -> None:
+        self.require_manager(ctx.author)
+        if member.bot:
+            raise BetError("Bots do not hold cookies.")
+        if amount == 0:
+            raise BetError("That would do nothing.")
+        if abs(amount) > MAX_GRANT:
+            raise BetError(f"Cap is {MAX_GRANT:,} {COOKIE} per use.")
+
+        before = _balance(ctx.guild.id, member.id)
+        after = _adjust(ctx.guild.id, member.id, amount)
+        moved = after - before
+        self._log_grant(ctx.guild.id, ctx.author.id, member.id, moved, reason)
+
+        verb = "Gave" if amount > 0 else "Took"
+        line = f"{verb} **{abs(moved):,}** {COOKIE} \u2014 {member.mention} now holds **{after:,}**."
+        if moved != amount:
+            line += f"\n\u2003Clipped from {abs(amount):,} \u2014 their wallet bottomed out."
+        if reason:
+            line += f"\n\u2003Reason: {reason}"
+        await ctx.reply(line, mention_author=False)
+
+    @bet.command(name="give")
+    async def bet_give(
+        self, ctx: commands.Context, member: discord.Member, amount: int, *, reason: Optional[str] = None
+    ) -> None:
+        await self._transfer(ctx, member, abs(amount), reason)
+
+    @bet.command(name="take")
+    async def bet_take(
+        self, ctx: commands.Context, member: discord.Member, amount: int, *, reason: Optional[str] = None
+    ) -> None:
+        await self._transfer(ctx, member, -abs(amount), reason)
+
+    @bet.command(name="grants")
+    async def bet_grants(self, ctx: commands.Context) -> None:
+        self.require_manager(ctx.author)
+        log = _guild_state(_load(), ctx.guild.id).get("grants", [])
+        if not log:
+            await ctx.reply("No cookies have been handed out yet.", mention_author=False, ephemeral=True)
+            return
+        lines = []
+        for entry in reversed(log[-15:]):
+            sign = "+" if entry["delta"] > 0 else "-"
+            stamp = discord.utils.format_dt(datetime.fromtimestamp(entry["at"], timezone.utc), "R")
+            tail = f" \u00b7 {entry['reason']}" if entry.get("reason") else ""
+            lines.append(
+                f"<@{entry['actor']}> \u2192 <@{entry['target']}> "
+                f"`{sign}{abs(entry['delta']):,}` {stamp}{tail}"
+            )
+        embed = discord.Embed(
+            title="Recent cookie grants",
+            description="\n".join(lines),
+            colour=discord.Colour.blurple(),
+        )
+        embed.set_footer(text=f"Last {len(log)} kept")
         await ctx.reply(embed=embed, mention_author=False, ephemeral=True)
 
     @commands.hybrid_command(name="bets")
