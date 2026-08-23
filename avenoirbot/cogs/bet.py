@@ -19,6 +19,8 @@ COOKIE = "\N{COOKIE}"
 MIN_STAKE = 1
 MAX_OPTIONS = 10
 LOCK_TICK = 20
+MAX_GRANT = 100_000
+GRANT_LOG_LIMIT = 50
 
 STATUS_COLOURS = {
     "open": discord.Colour.from_str("#57F287"),
