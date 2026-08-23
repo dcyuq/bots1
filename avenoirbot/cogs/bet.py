@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 
 from storage import Store
@@ -975,6 +976,11 @@ class Bets(commands.Cog):
         await self.bot.wait_until_ready()
 
     @commands.hybrid_group(name="bet", fallback="place", invoke_without_command=True)
+    @app_commands.describe(
+        game="Game id from /bets",
+        choice="Outcome number or name",
+        amount="500, 2.5k, half, all or 40%",
+    )
     async def bet(
         self,
         ctx: commands.Context,
@@ -1040,12 +1046,14 @@ class Bets(commands.Cog):
         )
 
     @bet.command(name="lock")
+    @app_commands.describe(game="Game id to close betting on")
     async def bet_lock(self, ctx: commands.Context, game: int) -> None:
         self.require_manager(ctx.author, self.fetch_game(ctx.guild.id, game))
         await self.lock_game(ctx.guild, game)
         await ctx.reply(f"Betting closed on game **#{game}**.", mention_author=False)
 
     @bet.command(name="settle")
+    @app_commands.describe(game="Game id to settle", choice="Winning outcome, leave blank to pick from a menu")
     async def bet_settle(self, ctx: commands.Context, game: int, *, choice: Optional[str] = None) -> None:
         record = self.fetch_game(ctx.guild.id, game)
         self.require_manager(ctx.author, record)
@@ -1067,6 +1075,7 @@ class Bets(commands.Cog):
         )
 
     @bet.command(name="cancel")
+    @app_commands.describe(game="Game id to cancel and refund")
     async def bet_cancel(self, ctx: commands.Context, game: int) -> None:
         self.require_manager(ctx.author, self.fetch_game(ctx.guild.id, game))
         record, refunded = await self.cancel_game(ctx.guild, game)
@@ -1111,6 +1120,7 @@ class Bets(commands.Cog):
         await ctx.reply(embed=embed, mention_author=False, ephemeral=True)
 
     @bet.command(name="wallet")
+    @app_commands.describe(member="Whose wallet to check, defaults to you")
     async def bet_wallet(self, ctx: commands.Context, member: Optional[discord.Member] = None) -> None:
         target = member or ctx.author
         if target.bot:
@@ -1153,12 +1163,22 @@ class Bets(commands.Cog):
         await ctx.reply(line, mention_author=False)
 
     @bet.command(name="give")
+    @app_commands.describe(
+        member="Who gets the cookies",
+        amount="How many to hand over",
+        reason="Optional note for the grant log",
+    )
     async def bet_give(
         self, ctx: commands.Context, member: discord.Member, amount: int, *, reason: Optional[str] = None
     ) -> None:
         await self._transfer(ctx, member, abs(amount), reason)
 
     @bet.command(name="take")
+    @app_commands.describe(
+        member="Who loses the cookies",
+        amount="How many to remove",
+        reason="Optional note for the grant log",
+    )
     async def bet_take(
         self, ctx: commands.Context, member: discord.Member, amount: int, *, reason: Optional[str] = None
     ) -> None:
