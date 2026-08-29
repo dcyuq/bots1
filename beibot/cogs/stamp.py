@@ -8,6 +8,7 @@ from discord.ext import commands
 from storage import Store
 
 PUBLIC_COMMANDS = ("stamps",)
+PUBLIC_SUBCOMMANDS = ("stamp profile",)
 
 MAX_STAGES = 21
 ALLOWED_SUFFIX = (".png", ".jpg", ".jpeg", ".gif", ".webp")
@@ -73,6 +74,13 @@ def suffix_for(attachment):
         if name.endswith(suffix):
             return suffix
     return ""
+
+
+def remaining_text(count, maximum):
+    """The single subtext line shown under a card: stamps left to fill it."""
+    remaining = max(0, maximum - count)
+    word = "stamp" if remaining == 1 else "stamps"
+    return "-# " + str(remaining) + " " + word + " remaining"
 
 
 class OverrideModal(discord.ui.Modal, title="Override Stamps"):
@@ -166,9 +174,9 @@ class ConfirmReset(discord.ui.View):
         self.stop()
 
 
-class StaffRow(discord.ui.ActionRow):
+class StaffView(discord.ui.View):
     def __init__(self, cog, member):
-        super().__init__()
+        super().__init__(timeout=900)
         self.cog = cog
         self.member = member
 
@@ -216,9 +224,9 @@ class StaffRow(discord.ui.ActionRow):
         )
 
 
-class IssueRow(discord.ui.ActionRow):
+class IssueView(discord.ui.View):
     def __init__(self, cog, member):
-        super().__init__()
+        super().__init__(timeout=900)
         self.cog = cog
         self.member = member
 
@@ -243,34 +251,6 @@ class IssueRow(discord.ui.ActionRow):
         )
 
 
-class NoCardView(discord.ui.LayoutView):
-    def __init__(self, heading, body, staff, cog=None, member=None):
-        super().__init__(timeout=None if not staff else 900)
-        container = discord.ui.Container(accent_colour=NEUTRAL)
-        container.add_item(discord.ui.TextDisplay(heading))
-        container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
-        container.add_item(discord.ui.TextDisplay(body))
-        if staff and cog is not None and member is not None:
-            container.add_item(IssueRow(cog, member))
-        self.add_item(container)
-
-
-class CardView(discord.ui.LayoutView):
-    def __init__(self, heading, footer, filename, accent, cog=None, member=None):
-        super().__init__(timeout=None if cog is None else 900)
-        container = discord.ui.Container(accent_colour=accent)
-        container.add_item(discord.ui.TextDisplay(heading))
-        container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
-        container.add_item(
-            discord.ui.MediaGallery(discord.MediaGalleryItem("attachment://" + filename))
-        )
-        container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
-        container.add_item(discord.ui.TextDisplay(footer))
-        if cog is not None and member is not None:
-            container.add_item(StaffRow(cog, member))
-        self.add_item(container)
-
-
 class Stamp(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -279,7 +259,10 @@ class Stamp(commands.Cog):
     async def cog_check(self, ctx):
         if ctx.guild is None:
             raise commands.NoPrivateMessage()
-        root = ctx.command.qualified_name.split()[0]
+        qualified = ctx.command.qualified_name
+        if qualified in PUBLIC_SUBCOMMANDS:
+            return True
+        root = qualified.split()[0]
         if root in PUBLIC_COMMANDS:
             return True
         if ctx.author.guild_permissions.manage_messages:
@@ -464,70 +447,44 @@ class Stamp(commands.Cog):
 
         return "ok", record, "\n".join(notes), bool(finished or reached), display
 
-    def build_card(self, guild_id, member, count, completed, note, complete, staff):
+    def build_card(self, guild_id, member, count, completed, staff):
+        """The card is now just the stamp image plus a single subtext line.
+
+        Returns (file, content, view). note/complete no longer change the
+        display, so callers may still pass them but they are ignored here.
+        """
         config = self.config_for(guild_id)
         maximum = self.maximum_for(guild_id, config)
         path = self.stage_file(guild_id, config, count)
         if path is None:
-            return None, None
+            return None, None, None
 
         filename = "stamp-card" + os.path.splitext(path)[1]
-        heading = "**Stamp Card**\n" + member.mention
+        file = discord.File(path, filename=filename)
+        content = remaining_text(count, maximum)
+        view = StaffView(self, member) if staff else None
+        return file, content, view
 
-        lines = [str(count) + " of " + str(maximum) + " stamps collected."]
-        if completed:
-            word = "card" if completed == 1 else "cards"
-            lines.append(str(completed) + " full " + word + " so far.")
-
-        upcoming, prize = next_milestone(config, count, maximum)
-        if prize:
-            remaining = upcoming - count
-            word = "stamp" if remaining == 1 else "stamps"
-            lines.append(
-                "Next reward at "
-                + str(upcoming)
-                + " in "
-                + str(remaining)
-                + " "
-                + word
-                + ": "
-                + prize
-            )
-        if note:
-            lines.append(note)
-
-        accent = COMPLETE if complete or count >= maximum else NEUTRAL
-        view = CardView(
-            heading,
-            "\n".join(lines),
-            filename,
-            accent,
-            self if staff else None,
-            member if staff else None,
-        )
-        return discord.File(path, filename=filename), view
-
-    async def send_card(self, ctx, member, config, count, completed, note, complete=False):
+    async def send_card(self, ctx, member, config, count, completed, note="", complete=False):
         staff = ctx.author.guild_permissions.manage_messages
-        file, view = self.build_card(
-            ctx.guild.id, member, count, completed, note, complete, staff
-        )
+        file, content, view = self.build_card(ctx.guild.id, member, count, completed, staff)
         if file is None:
             await ctx.send(
                 "No image is set for " + str(count) + " stamps. Run " + ctx.prefix + "stamp setup."
             )
             return
         await ctx.send(
+            content,
             file=file,
             view=view,
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
     async def refresh_card(
-        self, interaction, member, count, completed, note, complete, message=None
+        self, interaction, member, count, completed, note="", complete=False, message=None
     ):
         guild_id = interaction.guild.id if interaction is not None else message.guild.id
-        file, view = self.build_card(guild_id, member, count, completed, note, complete, True)
+        file, content, view = self.build_card(guild_id, member, count, completed, True)
         if file is None:
             if interaction is not None:
                 await interaction.response.send_message(
@@ -536,9 +493,11 @@ class Stamp(commands.Cog):
             return
 
         if interaction is not None:
-            await interaction.response.edit_message(attachments=[file], view=view)
+            await interaction.response.edit_message(
+                content=content, attachments=[file], view=view
+            )
         else:
-            await message.edit(attachments=[file], view=view)
+            await message.edit(content=content, attachments=[file], view=view)
 
     def collect_images(self, ctx):
         attachments = list(ctx.message.attachments)
@@ -631,13 +590,52 @@ class Stamp(commands.Cog):
         await self.send_card(ctx, member, config, 0, record["completed"], note)
 
     @commands.hybrid_group(name="stamp", invoke_without_command=True, fallback="give")
-    @app_commands.default_permissions(manage_messages=True)
     @commands.guild_only()
     async def stamp(self, ctx, member: discord.Member = None):
         if member is None:
             await self.show_setup(ctx)
             return
         await self.apply(ctx, member, 1)
+
+    @stamp.command(name="profile", description="Check stamp card progress.")
+    @app_commands.describe(member="Whose progress to check. Defaults to your own.")
+    async def stamp_profile(self, ctx, member: discord.Member = None):
+        member = member or ctx.author
+        config = self.config_for(ctx.guild.id)
+        if self.stage_count(ctx.guild.id, config) < 2:
+            await ctx.send("Stamp cards are not set up here yet.")
+            return
+
+        maximum = self.maximum_for(ctx.guild.id, config)
+        record = self.record_for(ctx.guild.id, member.id)
+        count = record["count"]
+        completed = record.get("completed", 0)
+
+        who = "Your" if member.id == ctx.author.id else member.display_name + "'s"
+        lines = ["**" + who + " stamp progress**"]
+
+        if card_active(record):
+            remaining = max(0, maximum - count)
+            word = "stamp" if remaining == 1 else "stamps"
+            lines.append(str(count) + " of " + str(maximum) + " stamps on the current card.")
+            lines.append(str(remaining) + " " + word + " to go until it is complete.")
+
+            upcoming, prize = next_milestone(config, count, maximum)
+            if prize:
+                left = upcoming - count
+                word = "stamp" if left == 1 else "stamps"
+                lines.append(
+                    "Next reward at " + str(upcoming)
+                    + " (" + str(left) + " " + word + " away): " + prize
+                )
+        else:
+            lines.append("No active card right now. Ask a staff member for one.")
+
+        if completed:
+            word = "card" if completed == 1 else "cards"
+            lines.append(str(completed) + " full " + word + " finished so far.")
+
+        await ctx.send("\n".join(lines), allowed_mentions=discord.AllowedMentions.none())
 
     @stamp.command(name="add", description="Give a member one or more stamps.")
     @app_commands.describe(member="Who to stamp", amount="How many to add")
@@ -719,33 +717,18 @@ class Stamp(commands.Cog):
         )
 
     async def send_no_card(self, ctx, member):
-        """Explain that a card has to be handed out, with a button for staff."""
-        record = self.record_for(ctx.guild.id, member.id)
+        """No active card means there is no image to show, so this stays a
+        short line, plus a button for staff to hand one over."""
         staff = ctx.author.guild_permissions.manage_messages
         mine = member.id == ctx.author.id
 
-        heading = "**Stamp Card**\n" + member.mention
-
-        lines = []
         if mine:
-            lines.append("You do not have a card yet. Ask a staff member for one.")
+            content = "You do not have a card yet. Ask a staff member for one."
         else:
-            lines.append(member.display_name + " does not have a card right now.")
+            content = member.display_name + " does not have a card right now."
 
-        completed = record.get("completed", 0)
-        if completed:
-            word = "card" if completed == 1 else "cards"
-            lines.append(str(completed) + " full " + word + " finished so far, which is kept.")
-
-        if staff:
-            lines.append("")
-            lines.append(
-                "Hand one over below, or run "
-                + ctx.prefix + "givestampcard " + member.display_name + "."
-            )
-
-        view = NoCardView(heading, "\n".join(lines), staff, self, member)
-        await ctx.send(view=view, allowed_mentions=discord.AllowedMentions.none())
+        view = IssueView(self, member) if staff else None
+        await ctx.send(content, view=view, allowed_mentions=discord.AllowedMentions.none())
 
     @stamp.group(
         name="setup",
