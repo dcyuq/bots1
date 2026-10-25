@@ -18,6 +18,8 @@ RESTART_DELAY = 5
 MAX_DELAY = 120
 HEALTHY_AFTER = 30
 
+ENABLED = {"avenoirbot"}
+
 _shutting_down = False
 _processes = {}
 
@@ -27,6 +29,8 @@ def discover_bots():
     found = []
     for entry in sorted(ROOT.iterdir()):
         if entry.name.startswith((".", "_")):
+            continue
+        if ENABLED and entry.name not in ENABLED:
             continue
         if entry.is_dir() and (entry / "main.py").is_file():
             found.append(entry)
